@@ -5,12 +5,14 @@ interface SkyPlotProps {
   samples: PassSample[];
   minElevationDeg?: number;
   colorByElevation?: boolean;
+  satelliteColor?: string;
 }
 
 export function SkyPlot({
   samples,
   minElevationDeg = 0,
-  colorByElevation = false
+  colorByElevation = false,
+  satelliteColor = "#6c8cff"
 }: SkyPlotProps) {
   const size = 320;
   const center = size / 2;
@@ -86,11 +88,11 @@ export function SkyPlot({
               .map(({ point }, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
               .join(" ")}
             fill="none"
-            stroke="#6c8cff"
+            stroke={satelliteColor}
             strokeWidth="2.5"
           />
           {samplePoints.map(({ sample, point }) => (
-            <circle key={sample.timestamp} cx={point.x} cy={point.y} r="2.5" fill="#6c8cff" />
+            <circle key={sample.timestamp} cx={point.x} cy={point.y} r="2.5" fill={satelliteColor} />
           ))}
         </>
       )}

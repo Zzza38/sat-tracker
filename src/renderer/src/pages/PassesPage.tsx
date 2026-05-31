@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { clsx } from "clsx";
 import { predictPassesBulk, passesToCsv, passesToIcs } from "@/shared/passes/predictor";
 import { formatDuration, formatTimestamp } from "@/shared/utils/date";
-import { loadWatchlistSatellites, useApp } from "../context/AppContext";
+import { useApp } from "../context/AppContext";
 import { ElevationChart } from "../components/ElevationChart";
 import { ElevationColorLegend } from "../components/ElevationColorLegend";
 import { SkyPlot } from "../components/SkyPlot";
@@ -30,18 +30,33 @@ export function PassesPage() {
     selectPass,
     selectedPass,
     getSatelliteColor,
-    previewPassOnTracker
+    previewPassOnTracker,
+    satellites,
+    watchlistIds,
+    selectedSatellite
   } = useApp();
   const [loading, setLoading] = useState(false);
   const [days, setDays] = useState(7);
   const [error, setError] = useState<string | null>(null);
   const [colorByElevation, setColorByElevation] = useState(readColorByElevationPreference);
+  const visiblePassTargets = useMemo(() => {
+    if (watchlistIds.length > 0) {
+      const ids = new Set(watchlistIds);
+      return satellites.filter((satellite) => ids.has(satellite.id));
+    }
+
+    return selectedSatellite ? [selectedSatellite] : [];
+  }, [satellites, selectedSatellite, watchlistIds]);
+  const visibleSatelliteIds = useMemo(
+    () => visiblePassTargets.map((satellite) => satellite.id),
+    [visiblePassTargets]
+  );
 
   const computePasses = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const targets = await loadWatchlistSatellites();
+      const targets = visiblePassTargets;
 
       if (targets.length === 0) {
         setPasses([]);
@@ -63,16 +78,15 @@ export function PassesPage() {
     } finally {
       setLoading(false);
     }
-  }, [days, observer, selectPass, setPasses]);
+  }, [days, observer, selectPass, setPasses, visiblePassTargets]);
 
   useEffect(() => {
     void computePasses();
   }, [computePasses]);
 
-  const passSatelliteIds = useMemo(
-    () => Array.from(new Set(passes.map((pass) => pass.satelliteId))),
-    [passes]
-  );
+  const selectedPassSatelliteColor = selectedPass
+    ? getSatelliteColor(selectedPass.satelliteId, visibleSatelliteIds)
+    : undefined;
   const elevationColorOptions = useMemo(
     () => ({ minElevationDeg: observer.minElevationDeg, maxElevationDeg: 90 }),
     [observer.minElevationDeg]
@@ -171,7 +185,7 @@ export function PassesPage() {
                     <span className="inline-flex items-center gap-2">
                       <span
                         className="size-2.5 rounded-full border border-[rgba(255,255,255,0.35)]"
-                        style={{ backgroundColor: getSatelliteColor(pass.satelliteId, passSatelliteIds) }}
+                        style={{ backgroundColor: getSatelliteColor(pass.satelliteId, visibleSatelliteIds) }}
                         aria-hidden="true"
                       />
                       {pass.satelliteName}
@@ -213,11 +227,13 @@ export function PassesPage() {
               samples={selectedPass.samples}
               minElevationDeg={observer.minElevationDeg}
               colorByElevation={colorByElevation}
+              satelliteColor={selectedPassSatelliteColor}
             />
             <ElevationChart
               samples={selectedPass.samples}
               minElevationDeg={observer.minElevationDeg}
               colorByElevation={colorByElevation}
+              satelliteColor={selectedPassSatelliteColor}
             />
             {colorByElevation ? (
               <ElevationColorLegend minElevationDeg={observer.minElevationDeg} />

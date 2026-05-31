@@ -39,8 +39,9 @@ export async function refreshSatellite(id: string) {
 
 export async function importFromTleSource(source: TleSource) {
   const records = await fetchTleSource(source);
-  await db.satellites.bulkPut(records);
-  return records.length;
+  const uniqueRecords = [...new Map(records.map((record) => [record.id, record])).values()];
+  await db.satellites.bulkPut(uniqueRecords);
+  return uniqueRecords.length;
 }
 
 export async function removeSatellite(id: string) {

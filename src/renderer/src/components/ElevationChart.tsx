@@ -5,12 +5,14 @@ interface ElevationChartProps {
   samples: PassSample[];
   colorByElevation?: boolean;
   minElevationDeg?: number;
+  satelliteColor?: string;
 }
 
 export function ElevationChart({
   samples,
   colorByElevation = false,
-  minElevationDeg = 0
+  minElevationDeg = 0,
+  satelliteColor = "#6c8cff"
 }: ElevationChartProps) {
   const width = 640;
   const height = 260;
@@ -107,11 +109,12 @@ export function ElevationChart({
       ) : (
         <>
           <polyline
-            fill="rgba(108,140,255,0.12)"
+            fill={satelliteColor}
+            fillOpacity="0.12"
             stroke="none"
             points={`${plotLeft},${plotBottom} ${points.join(" ")} ${plotRight},${plotBottom}`}
           />
-          <polyline fill="none" stroke="#6c8cff" strokeWidth="2.5" points={points.join(" ")} />
+          <polyline fill="none" stroke={satelliteColor} strokeWidth="2.5" points={points.join(" ")} />
         </>
       )}
 

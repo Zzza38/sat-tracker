@@ -97,12 +97,12 @@ export const db = new SatTrackerDb();
 export async function ensureSeedData() {
   const observerCount = await db.observers.count();
   if (observerCount === 0) {
-    await db.observers.add(DEFAULT_OBSERVER);
+    await db.observers.put(DEFAULT_OBSERVER);
   }
 
   const settings = await db.settings.get("app");
   if (!settings) {
-    await db.settings.add(DEFAULT_SETTINGS);
+    await db.settings.put(DEFAULT_SETTINGS);
   } else {
     const migrated = migrateSettings(settings);
     if (JSON.stringify(migrated) !== JSON.stringify(settings)) {
@@ -112,7 +112,7 @@ export async function ensureSeedData() {
 
   const watchlistCount = await db.watchlists.count();
   if (watchlistCount === 0) {
-    await db.watchlists.add({
+    await db.watchlists.put({
       id: "default",
       name: "Watchlist",
       satelliteIds: []

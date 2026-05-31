@@ -68,7 +68,6 @@ function entityStructureKey(satellites: TrackedSatelliteView[]) {
         satellite.color,
         satellite.selected,
         satellite.name,
-        satellite.noradId,
         trackRevision(satellite)
       ].join(":")
     )
@@ -76,26 +75,38 @@ function entityStructureKey(satellites: TrackedSatelliteView[]) {
 }
 
 function satelliteBillboard(color: string) {
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-      <defs>
-        <filter id="glow" x="-45%" y="-45%" width="190%" height="190%">
-          <feGaussianBlur stdDeviation="2.4" result="blur"/>
-          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-      </defs>
-      <g filter="url(#glow)">
-        <rect x="6" y="6" width="52" height="52" rx="14" fill="${color}"/>
-        <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="4">
-          <path d="M23.8 38.3c-7.7 5.2-14 7.1-16.1 4.9-3.1-3.1 2.7-13.9 12.9-24.1S41.6 3.2 44.7 6.3c2.2 2.2.3 8.4-4.9 16.1"/>
-          <path d="M40.2 25.7c7.7-5.2 14-7.1 16.1-4.9 3.1 3.1-2.7 13.9-12.9 24.1S22.4 60.8 19.3 57.7c-2.2-2.2-.3-8.4 4.9-16.1"/>
-          <circle cx="32" cy="32" r="8"/>
-          <circle cx="20" cy="20" r="2.5" fill="#ffffff" stroke="none"/>
-          <circle cx="44" cy="44" r="2.5" fill="#ffffff" stroke="none"/>
-        </g>
-      </g>
-    </svg>`;
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  const canvas = document.createElement("canvas");
+  canvas.width = 96;
+  canvas.height = 96;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return "";
+  }
+
+  context.shadowColor = color;
+  context.shadowBlur = 14;
+  context.fillStyle = color;
+  context.beginPath();
+  context.arc(48, 48, 21, 0, Math.PI * 2);
+  context.fill();
+
+  context.shadowBlur = 0;
+  context.lineWidth = 5;
+  context.strokeStyle = "#ffffff";
+  context.beginPath();
+  context.ellipse(48, 48, 34, 12, -0.72, 0.16, Math.PI * 1.38);
+  context.stroke();
+  context.beginPath();
+  context.ellipse(48, 48, 34, 12, -0.72, Math.PI + 0.16, Math.PI * 2.38);
+  context.stroke();
+
+  context.fillStyle = "#ffffff";
+  context.beginPath();
+  context.arc(48, 48, 7, 0, Math.PI * 2);
+  context.fill();
+
+  return canvas.toDataURL("image/png");
 }
 
 function setEntityPosition(entity: any, position: any) {
@@ -410,7 +421,7 @@ New York`,
           );
         }, false);
       }
-      const billboardStyleKey = `${satellite.color}-${satellite.selected}-${satellite.name}-${satellite.noradId}`;
+      const billboardStyleKey = `${satellite.color}-${satellite.selected}-${satellite.name}`;
       if (!satelliteEntity.billboard || !satelliteEntity.label || billboardStyleRef.current.get(satelliteEntityId) !== billboardStyleKey) {
         satelliteEntity.billboard = {
           image: satelliteBillboard(satellite.color),
@@ -425,8 +436,7 @@ New York`,
           disableDepthTestDistance: Number.POSITIVE_INFINITY
         };
         satelliteEntity.label = {
-          text: `${satellite.name}
-NORAD ID ${satellite.noradId}`,
+          text: satellite.name,
           font: "600 14px Inter, sans-serif",
           fillColor: Cesium.Color.WHITE,
           outlineColor: Cesium.Color.BLACK,
