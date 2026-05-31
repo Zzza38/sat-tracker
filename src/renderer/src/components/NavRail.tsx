@@ -16,9 +16,7 @@ export function NavRail() {
   return (
     <aside className="flex w-52 shrink-0 flex-col gap-1">
       <div className="mb-5 flex items-center gap-2.5 px-3 pt-1">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--accent)]">
-          <Orbit size={18} className="text-white" />
-        </div>
+        <img className="h-8 w-8 rounded-lg" src="/sat-tracker-icon.svg" alt="" />
         <div>
           <div className="text-sm font-semibold leading-tight text-[var(--text)]">Sat Tracker</div>
           <div className="text-xs leading-tight text-[var(--faint)]">Orbital ops</div>

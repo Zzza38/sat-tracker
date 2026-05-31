@@ -57,7 +57,7 @@ export async function toggleWatchlistSatellite(watchlistId: string, satelliteId:
   const exists = watchlist.satelliteIds.includes(satelliteId);
   const satelliteIds = exists
     ? watchlist.satelliteIds.filter((id) => id !== satelliteId)
-    : [...watchlist.satelliteIds, satelliteId];
+    : [satelliteId, ...watchlist.satelliteIds];
 
   await db.watchlists.update(watchlistId, { satelliteIds });
   return satelliteIds;
@@ -69,5 +69,10 @@ export async function getWatchlistSatellites(watchlistId = "default") {
     return [];
   }
 
-  return db.satellites.where("id").anyOf(watchlist.satelliteIds).toArray();
+  const records = await db.satellites.where("id").anyOf(watchlist.satelliteIds).toArray();
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+  return watchlist.satelliteIds.flatMap((id) => {
+    const record = recordsById.get(id);
+    return record ? [record] : [];
+  });
 }

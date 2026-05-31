@@ -1,5 +1,9 @@
+export function isElectronRuntime() {
+  return Boolean(window.electronAPI?.isElectron || navigator.userAgent.includes("Electron/"));
+}
+
 export async function saveTextFile(content: string, defaultName: string) {
-  if (window.electronAPI?.isElectron) {
+  if (isElectronRuntime() && window.electronAPI) {
     return window.electronAPI.saveFile(content, defaultName);
   }
 
@@ -14,7 +18,7 @@ export async function saveTextFile(content: string, defaultName: string) {
 }
 
 export async function notifyPass(title: string, body: string) {
-  if (window.electronAPI?.isElectron) {
+  if (isElectronRuntime() && window.electronAPI) {
     return window.electronAPI.showNotification(title, body);
   }
 

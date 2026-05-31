@@ -36,6 +36,9 @@ interface UnwrappablePoint {
 const EARTH_RADIUS_KM = 6371;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 6;
+const EQUINOX_DECLINATION_EPSILON_DEG = 0.1;
+const RAD = Math.PI / 180;
+const DEG = 180 / Math.PI;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -89,6 +92,71 @@ function trackPath(points: GroundTrackPoint[]) {
   return projectedPath(unwrapLongitudes(points).map(projectUnwrappedPoint));
 }
 
+function normalizeLongitude(longitudeDeg: number) {
+  let longitude = ((longitudeDeg + 180) % 360 + 360) % 360 - 180;
+  if (longitude === -180) {
+    longitude = 180;
+  }
+  return longitude;
+}
+
+function terminatorLatitude(longitudeDeg: number, sun: { latitudeDeg: number; longitudeDeg: number }) {
+  const declination = sun.latitudeDeg * RAD;
+  const hourAngle = (longitudeDeg - sun.longitudeDeg) * RAD;
+  const latitude = Math.atan(-Math.cos(hourAngle) / Math.tan(declination)) * DEG;
+
+  return clamp(latitude, -90, 90);
+}
+
+function getTerminatorPoints(sun: { latitudeDeg: number; longitudeDeg: number }, resolution = 2) {
+  return Array.from({ length: 360 * resolution + 1 }, (_, index) => {
+    const longitudeDeg = -180 + index / resolution;
+
+    return {
+      latitudeDeg: terminatorLatitude(longitudeDeg, sun),
+      longitudeDeg
+    };
+  });
+}
+
+function getNightOverlay(
+  sun: { latitudeDeg: number; longitudeDeg: number },
+  resolution = 2
+) {
+  if (Math.abs(sun.latitudeDeg) < EQUINOX_DECLINATION_EPSILON_DEG) {
+    const antiSolarLongitude = normalizeLongitude(sun.longitudeDeg + 180);
+    const westLongitude = antiSolarLongitude - 90;
+    const eastLongitude = antiSolarLongitude + 90;
+    const westTop = projectUnwrappedPoint({ latitudeDeg: 90, longitudeDeg: westLongitude });
+    const westBottom = projectUnwrappedPoint({ latitudeDeg: -90, longitudeDeg: westLongitude });
+    const eastTop = projectUnwrappedPoint({ latitudeDeg: 90, longitudeDeg: eastLongitude });
+    const eastBottom = projectUnwrappedPoint({ latitudeDeg: -90, longitudeDeg: eastLongitude });
+
+    return {
+      terminatorPath: [
+        `M ${westTop.x.toFixed(1)} ${westTop.y.toFixed(1)}`,
+        `L ${westBottom.x.toFixed(1)} ${westBottom.y.toFixed(1)}`,
+        `M ${eastTop.x.toFixed(1)} ${eastTop.y.toFixed(1)}`,
+        `L ${eastBottom.x.toFixed(1)} ${eastBottom.y.toFixed(1)}`
+      ].join(" "),
+      nightPath: projectedPath([westTop, eastTop, eastBottom, westBottom], true)
+    };
+  }
+
+  const terminator = getTerminatorPoints(sun, resolution);
+  const poleLatitude = sun.latitudeDeg < 0 ? 90 : -90;
+  const polygonPoints = [
+    { latitudeDeg: poleLatitude, longitudeDeg: -180 },
+    ...terminator,
+    { latitudeDeg: poleLatitude, longitudeDeg: 180 }
+  ];
+
+  return {
+    terminatorPath: projectedPath(terminator.map(projectUnwrappedPoint)),
+    nightPath: projectedPath(polygonPoints.map(projectUnwrappedPoint), true)
+  };
+}
+
 function footprintSize(satellite: TrackedSatelliteView) {
   const horizonAngleDeg =
     (Math.acos(EARTH_RADIUS_KM / (EARTH_RADIUS_KM + Math.max(satellite.altitudeKm, 1))) * 180) /
@@ -125,6 +193,7 @@ export function Map2D({ observer, satellites, currentTime, showSunMoon }: Map2DP
     const moon = getMoonSubpoint(currentTime);
     return projectLonLat([moon.longitudeDeg, moon.latitudeDeg]);
   }, [currentTime]);
+  const nightOverlay = useMemo(() => getNightOverlay(sunSubpoint, 3), [sunSubpoint]);
   const satelliteViews = useMemo(
     () =>
       satellites.map((satellite) => ({
@@ -248,6 +317,16 @@ export function Map2D({ observer, satellites, currentTime, showSunMoon }: Map2DP
 
                 {showSunMoon ? (
                   <g>
+                    <path d={nightOverlay.nightPath} fill="#02040a" opacity="0.3" />
+                    <path
+                      d={nightOverlay.terminatorPath}
+                      fill="none"
+                      stroke="#f8fafc"
+                      strokeDasharray={`${5 * markerScale} ${6 * markerScale}`}
+                      strokeLinecap="round"
+                      strokeOpacity="0.72"
+                      strokeWidth={1.5 * markerScale}
+                    />
                     <g transform={`translate(${sunPoint.x} ${sunPoint.y}) scale(${markerScale})`}>
                       <circle r="11" fill="#ffd76a" opacity="0.16" />
                       <circle r="4.5" fill="#ffd76a" />

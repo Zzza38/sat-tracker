@@ -17,11 +17,16 @@ export function searchSatellites(records: SatelliteRecord[], query: string) {
 
 export function sortSatellites(records: SatelliteRecord[], trackedIds: string[] = []) {
   const tracked = new Set(trackedIds);
+  const trackedOrder = new Map(trackedIds.map((id, index) => [id, index]));
   return [...records].sort((left, right) => {
     const leftTracked = tracked.has(left.id);
     const rightTracked = tracked.has(right.id);
     if (leftTracked !== rightTracked) {
       return leftTracked ? -1 : 1;
+    }
+
+    if (leftTracked && rightTracked) {
+      return (trackedOrder.get(left.id) ?? 0) - (trackedOrder.get(right.id) ?? 0);
     }
 
     return left.name.localeCompare(right.name);

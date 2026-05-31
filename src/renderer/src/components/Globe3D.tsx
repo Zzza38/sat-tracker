@@ -425,12 +425,12 @@ New York`,
       if (!satelliteEntity.billboard || !satelliteEntity.label || billboardStyleRef.current.get(satelliteEntityId) !== billboardStyleKey) {
         satelliteEntity.billboard = {
           image: satelliteBillboard(satellite.color),
-          scale: satellite.selected ? 0.48 : 0.4,
+          scale: satellite.selected ? 0.96 : 0.8,
           scaleByDistance: new Cesium.NearFarScalar(
             EARTH_RADIUS_M + 1200000,
-            satellite.selected ? 0.48 : 0.4,
+            satellite.selected ? 0.96 : 0.8,
             EARTH_RADIUS_M + 65000000,
-            satellite.selected ? 0.11 : 0.09
+            satellite.selected ? 0.22 : 0.18
           ),
           alignedAxis: Cesium.Cartesian3.ZERO,
           disableDepthTestDistance: Number.POSITIVE_INFINITY

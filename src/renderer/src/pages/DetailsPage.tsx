@@ -4,15 +4,13 @@ import { computeOrbitSnapshot, getOrbitMetrics } from "@/shared/propagation/engi
 import { formatTimestamp } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
 import { useTicker } from "../hooks/useTicker";
-import { DopplerPanel } from "../components/DopplerPanel";
 import { Button } from "../components/ui/button";
 
 export function DetailsPage() {
   const {
     selectedSatellite,
     observer,
-    refreshSelectedSatellite,
-    updateSatelliteFrequencies
+    refreshSelectedSatellite
   } = useApp();
   const now = useTicker(1000);
 
@@ -39,8 +37,7 @@ export function DetailsPage() {
 
     return predictPassesForSatellite(selectedSatellite, observer, {
       start: new Date(),
-      end: new Date(Date.now() + 3 * 86400000),
-      downlinkHz: selectedSatellite.frequencies?.downlinkHz
+      end: new Date(Date.now() + 3 * 86400000)
     }).slice(0, 5);
   }, [observer, selectedSatellite]);
 
@@ -86,16 +83,6 @@ export function DetailsPage() {
               <div className="mono mt-1.5 text-lg text-[var(--text)]">{value}</div>
             </div>
           ))}
-        </div>
-
-        <div className="mt-6">
-          <DopplerPanel
-            dopplerFactor={snapshot.dopplerFactor}
-            downlinkHz={selectedSatellite.frequencies?.downlinkHz}
-            onDownlinkHzChange={(downlinkHz) =>
-              void updateSatelliteFrequencies(selectedSatellite.id, { downlinkHz })
-            }
-          />
         </div>
 
         <div className="mt-6">

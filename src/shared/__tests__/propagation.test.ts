@@ -1,13 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_OBSERVER } from "@/shared/observer/defaults";
 import {
-  computeDopplerFrequency,
   computeOrbitSnapshot,
-  downlinkHzToMhzInput,
-  formatDopplerShift,
-  formatDopplerShiftLabel,
   getOrbitMetrics,
-  parseDownlinkMhzInput,
   satrecFromRecord
 } from "@/shared/propagation/engine";
 import { createSatelliteRecord, parseElementInput } from "@/shared/tle/parser";
@@ -35,16 +30,5 @@ describe("propagation engine", () => {
     expect(snapshot.latitudeDeg).toBeGreaterThan(-90);
     expect(snapshot.latitudeDeg).toBeLessThan(90);
     expect(snapshot.rangeKm).toBeGreaterThan(0);
-  });
-
-  it("computes Doppler frequency from a nominal downlink", () => {
-    const nominalHz = 437_500_000;
-    const dopplerFactor = 1.000005;
-
-    expect(parseDownlinkMhzInput("437.5")).toBe(nominalHz);
-    expect(downlinkHzToMhzInput(nominalHz)).toBe("437.5");
-    expect(formatDopplerShift(dopplerFactor, nominalHz)).toBeCloseTo(2187.5, 1);
-    expect(computeDopplerFrequency(nominalHz, dopplerFactor)).toBeCloseTo(437_502_187.5, 0);
-    expect(formatDopplerShiftLabel(2187.5)).toBe("+2.188 kHz");
   });
 });

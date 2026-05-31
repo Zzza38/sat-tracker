@@ -1,4 +1,4 @@
-import { degreesLat, degreesLong, eciToGeodetic, gstime, jday, sunPos } from "satellite.js";
+import { gstime, jday, sunPos } from "satellite.js";
 
 export interface LonLatPoint {
   latitudeDeg: number;
@@ -21,11 +21,12 @@ function daysSinceJ2000(date: Date) {
 }
 
 export function getSunSubpoint(date: Date): LonLatPoint {
-  const geodetic = eciToGeodetic(sunPos(jday(date)).rsun, gstime(date));
+  const sun = sunPos(jday(date));
+  const gmstDeg = gstime(date) * DEG;
 
   return {
-    latitudeDeg: degreesLat(geodetic.latitude),
-    longitudeDeg: degreesLong(geodetic.longitude)
+    latitudeDeg: sun.decl * DEG,
+    longitudeDeg: normalizeLongitude(sun.rtasc * DEG - gmstDeg)
   };
 }
 

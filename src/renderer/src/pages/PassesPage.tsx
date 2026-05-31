@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clsx } from "clsx";
 import { predictPassesBulk, passesToCsv, passesToIcs } from "@/shared/passes/predictor";
 import { formatDuration, formatTimestamp } from "@/shared/utils/date";
@@ -30,19 +30,22 @@ export function PassesPage() {
     selectPass,
     selectedPass,
     getSatelliteColor,
-    previewPassOnTracker,
     satellites,
     watchlistIds,
     selectedSatellite
   } = useApp();
+  const geometryRef = useRef<HTMLElement | null>(null);
   const [loading, setLoading] = useState(false);
   const [days, setDays] = useState(7);
   const [error, setError] = useState<string | null>(null);
   const [colorByElevation, setColorByElevation] = useState(readColorByElevationPreference);
   const visiblePassTargets = useMemo(() => {
     if (watchlistIds.length > 0) {
-      const ids = new Set(watchlistIds);
-      return satellites.filter((satellite) => ids.has(satellite.id));
+      const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
+      return watchlistIds.flatMap((id) => {
+        const satellite = recordsById.get(id);
+        return satellite ? [satellite] : [];
+      });
     }
 
     return selectedSatellite ? [selectedSatellite] : [];
@@ -99,6 +102,17 @@ export function PassesPage() {
     } catch {
       // Ignore storage failures in restricted environments.
     }
+  }
+
+  function inspectPass(pass: typeof selectedPass) {
+    if (!pass) {
+      return;
+    }
+
+    selectPass(pass);
+    requestAnimationFrame(() => {
+      geometryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   return (
@@ -178,8 +192,8 @@ export function PassesPage() {
                   key={`${pass.satelliteId}-${pass.aos}`}
                   className={clsx("cursor-pointer", selectedPass?.aos === pass.aos && "bg-[var(--accent-soft)]")}
                   onClick={() => selectPass(pass)}
-                  onDoubleClick={() => previewPassOnTracker(pass)}
-                  title="Double-click to preview this pass in Tracker"
+                  onDoubleClick={() => inspectPass(pass)}
+                  title="Double-click to inspect pass geometry"
                 >
                   <td>
                     <span className="inline-flex items-center gap-2">
@@ -212,7 +226,7 @@ export function PassesPage() {
         </div>
       </section>
 
-      <section className="panel p-5">
+      <section ref={geometryRef} className="panel scroll-mt-4 p-5">
         <p className="label">Pass geometry</p>
         {selectedPass ? (
           <div className="mt-4 space-y-5">

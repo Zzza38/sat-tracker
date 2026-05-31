@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { Clock3, Pause, Play, RotateCcw, SunMoon } from "lucide-react";
 import { buildGroundTrack, computeOrbitSnapshot } from "@/shared/propagation/engine";
 import { useApp } from "../context/AppContext";
 import { useTicker } from "../hooks/useTicker";
-import { DopplerPanel } from "../components/DopplerPanel";
 import { Globe3D } from "../components/Globe3D";
 import { Map2D, type TrackedSatelliteView } from "../components/Map2D";
 import { Button } from "../components/ui/button";
@@ -12,9 +11,16 @@ import { Slider } from "../components/ui/slider";
 
 const TRACK_WINDOW_MINUTES = 180;
 const TRACK_STEP_SECONDS = 60;
-const TIMELINE_MIN_MINUTES = -180;
-const TIMELINE_MAX_MINUTES = 180;
-const TIMELINE_STEP_MINUTES = 5;
+const INITIAL_TIMELINE_MIN_MINUTES = -180;
+const INITIAL_TIMELINE_MAX_MINUTES = 180;
+const TIMELINE_STEP_MINUTES = 0.5;
+
+type TimelineDragState = {
+  pointerId: number;
+  startX: number;
+  startOffset: number;
+  minutesPerPixel: number;
+};
 
 function formatTimelineOffset(minutes: number) {
   const rounded = Math.round(minutes);
@@ -34,8 +40,29 @@ function formatTimelineOffset(minutes: number) {
   return `${sign}${Number.isInteger(days) ? days.toFixed(0) : days.toFixed(1)}d`;
 }
 
-function clampTimelineOffset(minutes: number) {
-  return Math.min(TIMELINE_MAX_MINUTES, Math.max(TIMELINE_MIN_MINUTES, minutes));
+function clampTimelineOffset(minutes: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, minutes));
+}
+
+function roundTimelineOffset(minutes: number) {
+  return Math.round(minutes / TIMELINE_STEP_MINUTES) * TIMELINE_STEP_MINUTES;
+}
+
+function rangeForTimelineOffset(minutes: number) {
+  if (
+    minutes >= INITIAL_TIMELINE_MIN_MINUTES &&
+    minutes <= INITIAL_TIMELINE_MAX_MINUTES
+  ) {
+    return {
+      min: INITIAL_TIMELINE_MIN_MINUTES,
+      max: INITIAL_TIMELINE_MAX_MINUTES
+    };
+  }
+
+  return {
+    min: Math.min(INITIAL_TIMELINE_MIN_MINUTES, minutes),
+    max: Math.max(INITIAL_TIMELINE_MAX_MINUTES, minutes)
+  };
 }
 
 export function TrackerPage() {
@@ -51,13 +78,15 @@ export function TrackerPage() {
     selectSatellite,
     toggleWatchlist,
     getSatelliteColor,
-    setSatelliteColor,
-    updateSatelliteFrequencies
+    setSatelliteColor
   } = useApp();
   const visibleSatellites = useMemo(() => {
     if (watchlistIds.length > 0) {
-      const ids = new Set(watchlistIds);
-      return satellites.filter((satellite) => ids.has(satellite.id));
+      const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
+      return watchlistIds.flatMap((id) => {
+        const satellite = recordsById.get(id);
+        return satellite ? [satellite] : [];
+      });
     }
 
     return selectedSatellite ? [selectedSatellite] : [];
@@ -67,7 +96,12 @@ export function TrackerPage() {
     [visibleSatellites]
   );
   const timelineAnchorRef = useRef(Date.now());
+  const timelineDragRef = useRef<TimelineDragState | null>(null);
   const [timelineOffsetMin, setTimelineOffsetMin] = useState(0);
+  const [timelineRange, setTimelineRange] = useState({
+    min: INITIAL_TIMELINE_MIN_MINUTES,
+    max: INITIAL_TIMELINE_MAX_MINUTES
+  });
   const [timelineLive, setTimelineLive] = useState(true);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
@@ -112,8 +146,10 @@ export function TrackerPage() {
     }
 
     const elapsedMinutes = ((next - previous) / 60000) * playbackSpeed;
-    setTimelineOffsetMin((current) => clampTimelineOffset(current + elapsedMinutes));
-  }, [playbackNow, playbackSpeed, timelineLive, timelinePlaying]);
+    setTimelineOffsetMin((current) =>
+      clampTimelineOffset(current + elapsedMinutes, timelineRange.min, timelineRange.max)
+    );
+  }, [playbackNow, playbackSpeed, timelineLive, timelinePlaying, timelineRange]);
 
   useEffect(() => {
     if (!trackerPreviewRequest) {
@@ -123,9 +159,12 @@ export function TrackerPage() {
     const previewAnchor = Date.now();
     timelineAnchorRef.current = previewAnchor;
     previousPlaybackTickRef.current = previewAnchor;
-    setTimelineOffsetMin(
-      clampTimelineOffset((new Date(trackerPreviewRequest.startTime).getTime() - previewAnchor) / 60000)
-    );
+    const previewOffset = (new Date(trackerPreviewRequest.startTime).getTime() - previewAnchor) / 60000;
+    setTimelineRange((current) => ({
+      min: Math.min(current.min, rangeForTimelineOffset(previewOffset).min),
+      max: Math.max(current.max, rangeForTimelineOffset(previewOffset).max)
+    }));
+    setTimelineOffsetMin(previewOffset);
     setTimelineLive(false);
     setTimelinePlaying(true);
     setPlaybackSpeed(1);
@@ -165,7 +204,12 @@ export function TrackerPage() {
 
   function goLive() {
     timelineAnchorRef.current = Date.now();
+    timelineDragRef.current = null;
     setTimelineOffsetMin(0);
+    setTimelineRange({
+      min: INITIAL_TIMELINE_MIN_MINUTES,
+      max: INITIAL_TIMELINE_MAX_MINUTES
+    });
     setTimelineLive(true);
     setTimelinePlaying(false);
   }
@@ -192,6 +236,79 @@ export function TrackerPage() {
     }
   }
 
+  function setTimelineOffset(value: number) {
+    const nextValue = roundTimelineOffset(value);
+    setTimelineLive(false);
+    setTimelinePlaying(false);
+    setTimelineOffsetMin(nextValue);
+    setTimelineRange(rangeForTimelineOffset(nextValue));
+  }
+
+  function handleTimelinePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const span = timelineRange.max - timelineRange.min;
+    const clickedValue =
+      timelineRange.min + ((event.clientX - bounds.left) / Math.max(bounds.width, 1)) * span;
+    const nextValue = roundTimelineOffset(clickedValue);
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    timelineDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startOffset: nextValue,
+      minutesPerPixel:
+        (INITIAL_TIMELINE_MAX_MINUTES - INITIAL_TIMELINE_MIN_MINUTES) /
+        Math.max(bounds.width, 1)
+    };
+    setTimelineOffset(nextValue);
+  }
+
+  function handleTimelinePointerMove(event: PointerEvent<HTMLDivElement>) {
+    const drag = timelineDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    setTimelineOffset(drag.startOffset + (event.clientX - drag.startX) * drag.minutesPerPixel);
+  }
+
+  function handleTimelinePointerEnd(event: PointerEvent<HTMLDivElement>) {
+    const drag = timelineDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    timelineDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function handleTimelineKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const largeStep = 60;
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setTimelineOffset(visibleTimelineOffsetMin - TIMELINE_STEP_MINUTES);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setTimelineOffset(visibleTimelineOffsetMin + TIMELINE_STEP_MINUTES);
+    } else if (event.key === "PageDown") {
+      event.preventDefault();
+      setTimelineOffset(visibleTimelineOffsetMin - largeStep);
+    } else if (event.key === "PageUp") {
+      event.preventDefault();
+      setTimelineOffset(visibleTimelineOffsetMin + largeStep);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setTimelineOffset(0);
+    }
+  }
+
   if (!focusSatellite || !selectedSnapshot || trackedSatellites.length === 0) {
     return (
       <div className="panel p-8">
@@ -212,6 +329,13 @@ export function TrackerPage() {
   }
 
   const visibleTimelineOffsetMin = timelineLive ? 0 : timelineOffsetMin;
+  const timelineSpan = timelineRange.max - timelineRange.min;
+  const timelineThumbPercent =
+    ((visibleTimelineOffsetMin - timelineRange.min) / Math.max(timelineSpan, 1)) * 100;
+  const timelineCenterPercent =
+    ((0 - timelineRange.min) / Math.max(timelineSpan, 1)) * 100;
+  const timelineFillStartPercent = Math.min(timelineCenterPercent, timelineThumbPercent);
+  const timelineFillWidthPercent = Math.abs(timelineThumbPercent - timelineCenterPercent);
 
   return (
     <div className="space-y-5">
@@ -320,27 +444,42 @@ export function TrackerPage() {
           </div>
 
           <div className="mt-4 grid grid-cols-[56px_1fr_56px] items-center gap-3">
-            <span className="mono text-xs text-[var(--faint)]">{formatTimelineOffset(TIMELINE_MIN_MINUTES)}</span>
-            <div className="relative flex min-h-5 items-center">
-              <Slider
-                min={TIMELINE_MIN_MINUTES}
-                max={TIMELINE_MAX_MINUTES}
-                step={TIMELINE_STEP_MINUTES}
-                value={[visibleTimelineOffsetMin]}
-                aria-label="Timeline offset"
-                onValueChange={([value]) => {
-                  setTimelineLive(false);
-                  setTimelinePlaying(false);
-                  setTimelineOffsetMin(clampTimelineOffset(value ?? 0));
-                }}
-                className="w-full"
-              />
+            <span className="mono text-xs text-[var(--faint)]">{formatTimelineOffset(timelineRange.min)}</span>
+            <div
+              className="timeline-infinite-scrubber"
+              role="slider"
+              tabIndex={0}
+              aria-label="Timeline offset"
+              aria-valuemin={timelineRange.min}
+              aria-valuemax={timelineRange.max}
+              aria-valuenow={visibleTimelineOffsetMin}
+              aria-valuetext={formatTimelineOffset(visibleTimelineOffsetMin)}
+              onPointerDown={handleTimelinePointerDown}
+              onPointerMove={handleTimelinePointerMove}
+              onPointerUp={handleTimelinePointerEnd}
+              onPointerCancel={handleTimelinePointerEnd}
+              onKeyDown={handleTimelineKeyDown}
+            >
+              <div className="timeline-infinite-track">
+                <div
+                  className="timeline-infinite-fill"
+                  style={{
+                    left: `${timelineFillStartPercent}%`,
+                    width: `${timelineFillWidthPercent}%`
+                  }}
+                />
+                <div
+                  className="timeline-infinite-thumb"
+                  style={{ left: `${timelineThumbPercent}%` }}
+                />
+              </div>
               <div
-                className="pointer-events-none absolute left-1/2 top-1/2 z-10 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[var(--bg)] bg-[var(--success)] shadow-[0_0_0_2px_rgba(101,189,142,0.22)]"
+                className="pointer-events-none absolute top-1/2 z-10 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[var(--bg)] bg-[var(--success)] shadow-[0_0_0_2px_rgba(101,189,142,0.22)]"
+                style={{ left: `${timelineCenterPercent}%` }}
                 aria-hidden="true"
               />
             </div>
-            <span className="mono text-right text-xs text-[var(--faint)]">{formatTimelineOffset(TIMELINE_MAX_MINUTES)}</span>
+            <span className="mono text-right text-xs text-[var(--faint)]">{formatTimelineOffset(timelineRange.max)}</span>
           </div>
         </CardContent>
       </Card>
@@ -381,13 +520,6 @@ export function TrackerPage() {
         ))}
       </div>
 
-      <DopplerPanel
-        dopplerFactor={selectedSnapshot.dopplerFactor}
-        downlinkHz={focusSatellite.frequencies?.downlinkHz}
-        onDownlinkHzChange={(downlinkHz) =>
-          void updateSatelliteFrequencies(focusSatellite.id, { downlinkHz })
-        }
-      />
     </div>
   );
 }

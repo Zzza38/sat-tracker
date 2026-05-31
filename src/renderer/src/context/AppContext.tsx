@@ -66,10 +66,6 @@ interface AppContextValue {
   importTleSource: (sourceId: string) => Promise<void>;
   refreshSelectedSatellite: () => Promise<void>;
   toggleWatchlist: (satelliteId: string) => Promise<void>;
-  updateSatelliteFrequencies: (
-    satelliteId: string,
-    frequencies: SatelliteRecord["frequencies"]
-  ) => Promise<void>;
   updateObserver: (observer: ObserverSite) => Promise<void>;
   updateSettings: (partial: Partial<Awaited<ReturnType<typeof getSettings>>>) => Promise<void>;
   getSatelliteColor: (satelliteId: string, orderedIds: string[]) => string;
@@ -317,27 +313,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toggleWatchlist: async (satelliteId) => {
       const ids = await toggleWatchlistSatellite("default", satelliteId);
       setWatchlistIds(ids);
-    },
-    updateSatelliteFrequencies: async (satelliteId, frequencies) => {
-      const existing = await db.satellites.get(satelliteId);
-      if (!existing) {
-        throw new Error("Satellite not found.");
-      }
-
-      const merged = {
-        ...existing.frequencies,
-        ...frequencies
-      };
-
-      await db.satellites.put({
-        ...existing,
-        frequencies:
-          merged?.downlinkHz || merged?.uplinkHz
-            ? merged
-            : undefined
-      });
-      await refreshCatalog({ silent: true });
-      selectSatellite(satelliteId);
     },
     updateObserver: async (nextObserver) => {
       await db.observers.put(nextObserver);

@@ -1,7 +1,6 @@
 import {
   degreesLat,
   degreesLong,
-  dopplerFactor,
   ecfToLookAngles,
   eciToEcf,
   eciToGeodetic,
@@ -59,9 +58,7 @@ export function computeOrbitSnapshot(record: SatelliteRecord, date: Date, observ
   const positionEci = result.position;
   const velocityEci = result.velocity;
   const positionEcf = eciToEcf(positionEci, gmst);
-  const velocityEcf = eciToEcf(velocityEci, gmst);
   const observerGeodetic = observerToGeodetic(observer);
-  const observerEcf = geodeticToEcf(observerGeodetic);
   const lookAngles = ecfToLookAngles(observerGeodetic, positionEcf);
   const geodetic = eciToGeodetic(positionEci, gmst);
   const speed = Math.sqrt(velocityEci.x ** 2 + velocityEci.y ** 2 + velocityEci.z ** 2);
@@ -76,7 +73,6 @@ export function computeOrbitSnapshot(record: SatelliteRecord, date: Date, observ
     azimuthDeg: radiansToDegrees(lookAngles.azimuth),
     elevationDeg: radiansToDegrees(lookAngles.elevation),
     rangeKm: lookAngles.rangeSat,
-    dopplerFactor: dopplerFactor(observerEcf, positionEcf, velocityEcf),
     sunlit: shadow < 0.5,
     shadowFraction: shadow
   };
@@ -103,55 +99,6 @@ export function buildGroundTrack(
   }
 
   return track;
-}
-
-export function formatDopplerShift(dopplerFactorValue: number, frequencyHz?: number) {
-  if (!frequencyHz) {
-    return undefined;
-  }
-
-  return (dopplerFactorValue - 1) * frequencyHz;
-}
-
-export function computeDopplerFrequency(nominalHz: number, dopplerFactorValue: number) {
-  return nominalHz * dopplerFactorValue;
-}
-
-export function formatFrequencyMhz(hz: number, digits = 3) {
-  return `${(hz / 1e6).toFixed(digits)} MHz`;
-}
-
-export function formatDopplerShiftLabel(shiftHz: number) {
-  const sign = shiftHz >= 0 ? "+" : "";
-
-  if (Math.abs(shiftHz) >= 1000) {
-    return `${sign}${(shiftHz / 1000).toFixed(3)} kHz`;
-  }
-
-  return `${sign}${shiftHz.toFixed(1)} Hz`;
-}
-
-export function parseDownlinkMhzInput(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const mhz = Number(trimmed);
-  if (!Number.isFinite(mhz) || mhz <= 0) {
-    return undefined;
-  }
-
-  return mhz * 1_000_000;
-}
-
-export function downlinkHzToMhzInput(hz?: number) {
-  if (!hz || hz <= 0) {
-    return "";
-  }
-
-  const mhz = hz / 1_000_000;
-  return Number.isInteger(mhz) ? String(mhz) : mhz.toFixed(6).replace(/\.?0+$/, "");
 }
 
 function jday(date: Date) {

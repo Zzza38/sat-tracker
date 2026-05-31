@@ -10,11 +10,6 @@ export interface ObserverSite {
   minElevationDeg: number;
 }
 
-export interface FrequencyConfig {
-  downlinkHz?: number;
-  uplinkHz?: number;
-}
-
 export interface OmmElements {
   OBJECT_NAME?: string;
   OBJECT_ID?: string;
@@ -49,7 +44,6 @@ export interface SatelliteRecord {
   tle?: TleElements;
   omm?: OmmElements;
   notes?: string;
-  frequencies?: FrequencyConfig;
   tags?: string[];
 }
 
@@ -62,7 +56,6 @@ export interface OrbitSnapshot {
   azimuthDeg: number;
   elevationDeg: number;
   rangeKm: number;
-  dopplerFactor: number;
   sunlit: boolean;
   shadowFraction: number;
 }
@@ -87,7 +80,6 @@ export interface PassPrediction {
   losAzimuthDeg: number;
   rangeKmAtTca: number;
   illuminated: boolean;
-  dopplerHzAtTca?: number;
   samples: PassSample[];
 }
 

@@ -95,6 +95,115 @@ input,
 textarea,
 select {
   font: inherit;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.electron-shell {
+  padding-top: 34px;
+}
+
+.electron-shell > .mx-auto {
+  min-height: calc(100vh - 34px);
+}
+
+.electron-titlebar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 10000;
+  display: flex;
+  height: 34px;
+  align-items: stretch;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: #0c0d10;
+  user-select: none;
+}
+
+.electron-titlebar-drag {
+  flex: 1;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+.electron-window-controls {
+  display: flex;
+  width: 138px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+button.electron-window-control:not([data-slot]) {
+  position: relative;
+  display: grid;
+  width: 46px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.025);
+  color: #e9eaec;
+  padding: 0;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+button.electron-window-control:not([data-slot]):hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+button.electron-window-control-close:not([data-slot]) {
+  background: rgba(216, 59, 59, 0.16);
+  color: #ffd7d7;
+}
+
+button.electron-window-control-close:not([data-slot]):hover {
+  background: #d83b3b;
+  color: white;
+}
+
+.electron-window-control span,
+.electron-window-control span::before,
+.electron-window-control span::after {
+  display: block;
+  content: "";
+}
+
+.electron-window-control-minimize span {
+  width: 13px;
+  height: 1.5px;
+  background: currentColor;
+}
+
+.electron-window-control-maximize span {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.electron-window-control-close span {
+  position: relative;
+  width: 15px;
+  height: 15px;
+}
+
+.electron-window-control-close span::before,
+.electron-window-control-close span::after {
+  position: absolute;
+  top: 7px;
+  left: 1px;
+  width: 14px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.electron-window-control-close span::before {
+  transform: rotate(45deg);
+}
+
+.electron-window-control-close span::after {
+  transform: rotate(-45deg);
 }
 
 .mono {
@@ -519,6 +628,53 @@ button.nav-item.active:not([data-slot]) {
   width: 2rem;
   color: var(--faint);
   font-size: 0.6875rem;
+}
+
+.timeline-infinite-scrubber {
+  position: relative;
+  display: flex;
+  min-height: 1.75rem;
+  align-items: center;
+  cursor: default;
+  touch-action: none;
+  user-select: none;
+}
+
+.timeline-infinite-scrubber:focus-visible {
+  outline: none;
+}
+
+.timeline-infinite-scrubber:focus-visible .timeline-infinite-track {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.timeline-infinite-track {
+  position: relative;
+  width: 100%;
+  height: 0.38rem;
+  overflow: visible;
+  border-radius: 999px;
+  background: #2a3038;
+}
+
+.timeline-infinite-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.timeline-infinite-thumb {
+  position: absolute;
+  top: 50%;
+  width: 1rem;
+  height: 1rem;
+  transform: translate(-50%, -50%);
+  border: 2px solid #0c0d10;
+  border-radius: 999px;
+  background: #f8fafc;
+  box-shadow: 0 0 0 1px var(--line-strong);
 }
 
 table {

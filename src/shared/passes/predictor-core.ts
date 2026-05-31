@@ -1,4 +1,4 @@
-import { computeOrbitSnapshot, formatDopplerShift } from "@/shared/propagation/engine";
+import { computeOrbitSnapshot } from "@/shared/propagation/engine";
 import { ObserverSite, PassPrediction, PassSample, SatelliteRecord } from "@/shared/types";
 
 export interface PassPredictOptions {
@@ -6,7 +6,6 @@ export interface PassPredictOptions {
   end?: Date;
   minElevationDeg?: number;
   stepSeconds?: number;
-  downlinkHz?: number;
 }
 
 function elevationAt(record: SatelliteRecord, observer: ObserverSite, date: Date) {
@@ -117,7 +116,6 @@ export function predictPassesForSatellite(
         losAzimuthDeg: losSnapshot.azimuthDeg,
         rangeKmAtTca: tcaSnapshot.rangeKm,
         illuminated: tcaSnapshot.sunlit,
-        dopplerHzAtTca: formatDopplerShift(tcaSnapshot.dopplerFactor, options.downlinkHz),
         samples
       });
 
@@ -141,8 +139,7 @@ export function passesToCsv(passes: PassPrediction[]) {
     "TCAzimuth",
     "LOSAzimuth",
     "RangeKmAtTCA",
-    "Illuminated",
-    "DopplerHzAtTCA"
+    "Illuminated"
   ].join(",");
 
   const rows = passes.map((pass) =>
@@ -157,8 +154,7 @@ export function passesToCsv(passes: PassPrediction[]) {
       pass.tcaAzimuthDeg.toFixed(2),
       pass.losAzimuthDeg.toFixed(2),
       pass.rangeKmAtTca.toFixed(2),
-      pass.illuminated ? "yes" : "no",
-      pass.dopplerHzAtTca?.toFixed(2) ?? ""
+      pass.illuminated ? "yes" : "no"
     ].join(",")
   );
 
