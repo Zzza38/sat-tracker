@@ -1,0 +1,33 @@
+import { builtinModules } from "node:module";
+import path from "node:path";
+import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+
+const wasmMultiThreadStub = path.resolve("src/shared/passes/wasm-multithread-stub.ts");
+
+export default defineConfig({
+  main: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        external: ["electron", ...builtinModules]
+      }
+    }
+  },
+  preload: {
+    plugins: [externalizeDepsPlugin()]
+  },
+  renderer: {
+    resolve: {
+      alias: {
+        "@": path.resolve("src"),
+        "#wasm-multi-thread": wasmMultiThreadStub
+      }
+    },
+    define: {
+      CESIUM_BASE_URL: JSON.stringify("cesium")
+    },
+    plugins: [react(), tailwindcss()]
+  }
+});
