@@ -1,7 +1,11 @@
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
-import { createTleSourceId, refreshIntervalToHours } from "@/shared/tle/sources";
-import { RefreshIntervalUnit, TleSource, TleSourceEndpoint } from "@/shared/types";
+import {
+  createUrlTleSource,
+  refreshIntervalToHours,
+  tleSourceUrl
+} from "@/shared/tle/sources";
+import { RefreshIntervalUnit, TleSource } from "@/shared/types";
+import { importFromTleSource } from "@/shared/catalog/service";
 import { useApp } from "../context/AppContext";
 import {
   Select,
@@ -14,69 +18,64 @@ import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 
 export function SettingsPage() {
-  const { observer, settings, updateObserver, updateSettings, importTleSource } = useApp();
+  const { observer, settings, updateObserver, updateSettings, refreshCatalog } = useApp();
   const [draft, setDraft] = useState(observer);
   const [saved, setSaved] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<string | null>(null);
-  const [importingSourceId, setImportingSourceId] = useState<string | null>(null);
-  const [newSource, setNewSource] = useState({
-    name: "",
-    endpoint: "gp" as TleSourceEndpoint,
-    group: "",
-    supplementalFile: "",
-    url: ""
-  });
+  const [importingAll, setImportingAll] = useState(false);
+  const [sourceUrls, setSourceUrls] = useState(() =>
+    settings.tleSources.map((source) => tleSourceUrl(source)).join("\n")
+  );
 
   async function save() {
     await updateObserver(draft);
     setSaved("Observer saved.");
   }
 
-  function updateTleSources(nextSources: TleSource[]) {
-    const nextDefault = nextSources.some((source) => source.id === settings.defaultTleSourceId)
-      ? settings.defaultTleSourceId
-      : nextSources[0]?.id ?? settings.defaultTleSourceId;
-
-    void updateSettings({
+  async function updateTleSources(nextSources: TleSource[]) {
+    await updateSettings({
       tleSources: nextSources,
-      defaultTleSourceId: nextDefault
+      defaultTleSourceId: nextSources[0]?.id ?? settings.defaultTleSourceId
     });
   }
 
-  function addSource() {
-    const name = newSource.name.trim();
-    if (!name) {
-      return;
-    }
-
-    const source: TleSource = {
-      id: createTleSourceId(),
-      name,
-      endpoint: newSource.endpoint,
-      group: newSource.endpoint === "gp" ? newSource.group.trim() || undefined : undefined,
-      supplementalFile:
-        newSource.endpoint === "supplemental" ? newSource.supplementalFile.trim() || undefined : undefined,
-      url: newSource.endpoint === "url" ? newSource.url.trim() || undefined : undefined
-    };
-
-    updateTleSources([...settings.tleSources, source]);
-    setNewSource({ name: "", endpoint: "gp", group: "", supplementalFile: "", url: "" });
+  async function saveSourceUrls() {
+    await updateTleSources(buildSourcesFromText());
+    setImportStatus("Sources saved.");
   }
 
-  function removeSource(id: string) {
-    updateTleSources(settings.tleSources.filter((source) => source.id !== id));
+  function parseSourceUrls(raw: string) {
+    return raw
+      .split(/[\n,]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
   }
 
-  async function importSource(id: string) {
+  function buildSourcesFromText() {
+    return parseSourceUrls(sourceUrls).map((url) => {
+      const existing = settings.tleSources.find((source) => tleSourceUrl(source) === url);
+      return existing ?? createUrlTleSource(url);
+    });
+  }
+
+  async function importAllSources() {
     setImportStatus(null);
-    setImportingSourceId(id);
+    setImportingAll(true);
     try {
-      await importTleSource(id);
-      setImportStatus("Update complete.");
-    } catch (caught) {
-      setImportStatus(caught instanceof Error ? caught.message : "Update failed.");
+      const sources = buildSourcesFromText();
+      await updateTleSources(sources);
+      const results = await Promise.allSettled(sources.map((source) => importFromTleSource(source)));
+      const failures = results.filter((result) => result.status === "rejected").length;
+      if (failures < sources.length) {
+        await refreshCatalog({ silent: true });
+      }
+      if (failures > 0) {
+        setImportStatus(`${sources.length - failures} sources updated, ${failures} failed.`);
+      } else {
+        setImportStatus("All sources updated.");
+      }
     } finally {
-      setImportingSourceId(null);
+      setImportingAll(false);
     }
   }
 
@@ -84,6 +83,7 @@ export function SettingsPage() {
     settings.refreshIntervalValue,
     settings.refreshIntervalUnit
   );
+  const sourceUrlCount = parseSourceUrls(sourceUrls).length;
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[380px_1fr]">
@@ -149,7 +149,7 @@ export function SettingsPage() {
 
           <div className="mt-6 grid gap-4 md:grid-cols-[1fr_160px]">
             <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-[var(--faint)]">Mark stale after</span>
+              <span className="text-xs font-medium text-[var(--faint)]">Automatically refresh every</span>
               <input
                 type="number"
                 min={1}
@@ -180,8 +180,8 @@ export function SettingsPage() {
           </div>
 
           <p className="mt-3 text-sm text-[var(--muted)]">
-            Satellites older than {settings.refreshIntervalValue} {settings.refreshIntervalUnit} (
-            {staleAfterHours} hours) are marked stale.
+            The catalog refreshes from all configured sources when local TLE data is older than{" "}
+            {settings.refreshIntervalValue} {settings.refreshIntervalUnit} ({staleAfterHours} hours).
           </p>
         </section>
 
@@ -191,134 +191,54 @@ export function SettingsPage() {
               <p className="label">TLE sources</p>
               <h2 className="mt-1.5 text-xl font-semibold tracking-tight text-[var(--text)]">Fetch sources</h2>
               <p className="mt-2 text-sm text-[var(--muted)]">
-                Manage CelesTrak groups and supplemental feeds. Update from here to populate the catalog.
+                Add TLE or OMM JSON feed URLs. Updates fetch every source together.
               </p>
             </div>
-            <label className="flex h-9 items-center gap-2 rounded-md border border-[var(--line-strong)] bg-[var(--surface-2)] px-3 text-sm font-medium text-[var(--text)]">
-              <Switch
-                checked={settings.trackOnAdd}
-                onCheckedChange={(checked) => void updateSettings({ trackOnAdd: checked })}
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex h-9 items-center gap-2 rounded-md border border-[var(--line-strong)] bg-[var(--surface-2)] px-3 text-sm font-medium text-[var(--text)]">
+                <Switch
+                  checked={settings.trackOnAdd}
+                  onCheckedChange={(checked) => void updateSettings({ trackOnAdd: checked })}
+                  size="sm"
+                />
+                Auto-track new satellites
+              </label>
+              <Button
+                className="w-[116px]"
+                variant="secondary"
                 size="sm"
-              />
-              Auto-track new satellites
-            </label>
-          </div>
-
-          <div className="mt-5 space-y-3">
-            {settings.tleSources.map((source) => (
-              <div
-                key={source.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-[var(--line)] bg-[var(--surface-2)] px-4 py-3"
+                disabled={importingAll || sourceUrlCount === 0}
+                onClick={() => void importAllSources()}
               >
-                <div>
-                  <div className="font-medium text-[var(--text)]">{source.name}</div>
-                  <div className="mono mt-1 text-xs text-[var(--faint)]">
-                    {source.endpoint === "gp"
-                      ? `GP group: ${source.group ?? "unset"}`
-                      : source.endpoint === "supplemental"
-                        ? `Supplemental: ${source.supplementalFile ?? "unset"}`
-                        : `URL: ${source.url ?? "unset"}`}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    className="w-[96px]"
-                    variant="secondary"
-                    size="sm"
-                    disabled={importingSourceId === source.id}
-                    onClick={() => void importSource(source.id)}
-                  >
-                    Update
-                  </Button>
-                  <Button
-                    className="w-[132px]"
-                    variant={settings.defaultTleSourceId === source.id ? "default" : "secondary"}
-                    size="sm"
-                    onClick={() => void updateSettings({ defaultTleSourceId: source.id })}
-                  >
-                    {settings.defaultTleSourceId === source.id ? "Default" : "Make default"}
-                  </Button>
-                  <Button variant="ghost" size="icon-sm" onClick={() => removeSource(source.id)} aria-label={`Remove ${source.name}`}>
-                    <Trash2 size={14} />
-                  </Button>
-                </div>
-              </div>
-            ))}
-
-            {settings.tleSources.length === 0 ? (
-              <p className="text-sm text-[var(--muted)]">No sources configured. Add one below.</p>
-            ) : null}
+                {importingAll ? "Updating..." : "Update all"}
+              </Button>
+            </div>
           </div>
 
           {importStatus ? <p className="mono mt-3 text-sm text-[var(--accent)]">{importStatus}</p> : null}
 
-          <div className="mt-6 rounded-[10px] border border-[var(--line)] p-4">
-            <p className="text-sm font-medium text-[var(--text)]">Add source</p>
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <label className="block space-y-1.5 md:col-span-2">
-                <span className="text-xs font-medium text-[var(--faint)]">Display name</span>
-                <input
-                  value={newSource.name}
-                  onChange={(event) => setNewSource({ ...newSource, name: event.target.value })}
-                  placeholder="My custom group"
-                />
-              </label>
-              <label className="block space-y-1.5">
-                <span className="text-xs font-medium text-[var(--faint)]">Endpoint</span>
-                <Select
-                  value={newSource.endpoint}
-                  onValueChange={(value) =>
-                    setNewSource({
-                      ...newSource,
-                      endpoint: value as TleSourceEndpoint
-                    })
-                  }
-                >
-                  <SelectTrigger className="h-[42px] border-[var(--line-strong)] bg-[var(--bg)]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gp">CelesTrak GP group</SelectItem>
-                    <SelectItem value="supplemental">CelesTrak supplemental</SelectItem>
-                    <SelectItem value="url">Custom URL</SelectItem>
-                  </SelectContent>
-                </Select>
-              </label>
-              {newSource.endpoint === "gp" ? (
-                <label className="block space-y-1.5">
-                  <span className="text-xs font-medium text-[var(--faint)]">Group name</span>
-                  <input
-                    value={newSource.group}
-                    onChange={(event) => setNewSource({ ...newSource, group: event.target.value })}
-                    placeholder="stations"
-                  />
-                </label>
-              ) : newSource.endpoint === "supplemental" ? (
-                <label className="block space-y-1.5">
-                  <span className="text-xs font-medium text-[var(--faint)]">Supplemental file</span>
-                  <input
-                    value={newSource.supplementalFile}
-                    onChange={(event) =>
-                      setNewSource({ ...newSource, supplementalFile: event.target.value })
-                    }
-                    placeholder="starlink"
-                  />
-                </label>
-              ) : (
-                <label className="block space-y-1.5">
-                  <span className="text-xs font-medium text-[var(--faint)]">Source URL</span>
-                  <input
-                    value={newSource.url}
-                    onChange={(event) => setNewSource({ ...newSource, url: event.target.value })}
-                    placeholder="https://example.com/catalog.tle"
-                  />
-                </label>
-              )}
+          <div className="mt-6">
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-[var(--faint)]">One URL per line</span>
+              <textarea
+                className="mono min-h-[280px] resize-y text-xs leading-relaxed"
+                value={sourceUrls}
+                onChange={(event) => setSourceUrls(event.target.value)}
+                placeholder={`https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=JSON
+https://example.com/catalog.tle`}
+              />
+            </label>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => void saveSourceUrls()}>
+                Save sources
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setSourceUrls(settings.tleSources.map((source) => tleSourceUrl(source)).join("\n"))}
+              >
+                Revert
+              </Button>
             </div>
-            <Button className="mt-4" variant="secondary" onClick={addSource}>
-              <Plus size={14} className="mr-1 inline" />
-              Add source
-            </Button>
           </div>
         </section>
       </div>

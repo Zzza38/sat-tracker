@@ -9,7 +9,7 @@ import {
 } from "@/shared/catalog/service";
 import { db, ensureSeedData, getActiveObserver, getSettings, saveSettings } from "@/shared/db";
 import { DEFAULT_OBSERVER } from "@/shared/observer/defaults";
-import { DEFAULT_TLE_SOURCES } from "@/shared/tle/sources";
+import { DEFAULT_TLE_SOURCES, refreshIntervalToHours } from "@/shared/tle/sources";
 import { resolveSatelliteColor } from "@/shared/satellite/colors";
 import { ObserverSite, PassPrediction, SatelliteRecord } from "@/shared/types";
 
@@ -79,19 +79,22 @@ interface AppContextValue {
 
 const AppContext = createContext<AppContextValue | null>(null);
 let seedPromise: Promise<void> | null = null;
+let autoRefreshPromise: Promise<void> | null = null;
 
 async function fetchInitialSources(appSettings: Awaited<ReturnType<typeof getSettings>>) {
-  let importedAny = false;
-  const failures: string[] = [];
+  const results = await Promise.allSettled(
+    appSettings.tleSources.map(async (source) => ({
+      source,
+      importedCount: await importFromTleSource(source)
+    }))
+  );
 
-  for (const source of appSettings.tleSources) {
-    try {
-      const importedCount = await importFromTleSource(source);
-      importedAny = importedAny || importedCount > 0;
-    } catch {
-      failures.push(source.name);
-    }
-  }
+  const importedAny = results.some(
+    (result) => result.status === "fulfilled" && result.value.importedCount > 0
+  );
+  const failures = results.flatMap((result, index) =>
+    result.status === "rejected" ? [appSettings.tleSources[index]?.name ?? "source"] : []
+  );
 
   if (importedAny) {
     await saveSettings({ initialSourcesFetched: true, demoSeeded: true });
@@ -100,6 +103,23 @@ async function fetchInitialSources(appSettings: Awaited<ReturnType<typeof getSet
   if (!importedAny && failures.length > 0) {
     throw new Error(`Could not import ${failures.join(", ")}.`);
   }
+}
+
+function catalogNeedsRefresh(
+  records: SatelliteRecord[],
+  appSettings: Awaited<ReturnType<typeof getSettings>>
+) {
+  if (records.length === 0 || appSettings.tleSources.length === 0) {
+    return false;
+  }
+
+  const refreshMs =
+    refreshIntervalToHours(appSettings.refreshIntervalValue, appSettings.refreshIntervalUnit) * 60 * 60 * 1000;
+  const oldestFetch = Math.min(
+    ...records.map((record) => new Date(record.fetchedAt).getTime()).filter(Number.isFinite)
+  );
+
+  return Number.isFinite(oldestFetch) && Date.now() - oldestFetch >= refreshMs;
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -166,6 +186,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           })();
         }
         await seedPromise;
+        records = await listSatellites();
+      } else if (catalogNeedsRefresh(records, appSettings)) {
+        if (!autoRefreshPromise) {
+          autoRefreshPromise = fetchInitialSources(appSettings).finally(() => {
+            autoRefreshPromise = null;
+          });
+        }
+        await autoRefreshPromise;
         records = await listSatellites();
       }
 
