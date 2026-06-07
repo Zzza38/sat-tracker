@@ -14,6 +14,14 @@ export function ElevationChart({
   minElevationDeg = 0,
   satelliteColor = "#6c8cff"
 }: ElevationChartProps) {
+  if (samples.length === 0) {
+    return (
+      <div className="grid h-[260px] place-items-center rounded-[10px] border border-[var(--line)] bg-[#0c0d10] text-sm text-[var(--muted)]">
+        No elevation samples available.
+      </div>
+    );
+  }
+
   const width = 640;
   const height = 260;
   const padding = { top: 38, right: 24, bottom: 44, left: 52 };
@@ -45,6 +53,7 @@ export function ElevationChart({
   });
 
   const points = samplePoints.map(({ x, y }) => `${x},${y}`);
+  const linePoints = samplePoints.length === 1 ? [...points, ...points] : points;
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="h-[260px] w-full" role="img" aria-label="Pass elevation over time">
@@ -76,7 +85,6 @@ export function ElevationChart({
           {samplePoints.slice(1).map(({ sample, x, y }, index) => {
             const previous = samplePoints[index];
             const segmentElevation = (previous.sample.elevationDeg + sample.elevationDeg) / 2;
-            const color = elevationToColor(segmentElevation, colorOptions);
 
             return (
               <polygon
@@ -112,9 +120,9 @@ export function ElevationChart({
             fill={satelliteColor}
             fillOpacity="0.12"
             stroke="none"
-            points={`${plotLeft},${plotBottom} ${points.join(" ")} ${plotRight},${plotBottom}`}
+            points={`${plotLeft},${plotBottom} ${linePoints.join(" ")} ${plotRight},${plotBottom}`}
           />
-          <polyline fill="none" stroke={satelliteColor} strokeWidth="2.5" points={points.join(" ")} />
+          <polyline fill="none" stroke={satelliteColor} strokeWidth="2.5" points={linePoints.join(" ")} />
         </>
       )}
 

@@ -4,15 +4,17 @@ import { createWorldMapTextureDataUrl } from "./worldMap";
 import type { TrackedSatelliteView } from "./Map2D";
 
 interface Globe3DProps {
-  observer: { latitude: number; longitude: number; altitudeM: number };
+  observer: { name: string; latitude: number; longitude: number; altitudeM: number };
   satellites: TrackedSatelliteView[];
   currentTime: Date;
   showSunMoon: boolean;
+  onSatelliteDoubleClick?: (satelliteId: string) => void;
 }
 
 const EARTH_RADIUS_M = 6371000;
 const FOOTPRINT_HEIGHT_M = 12000;
 const FOOTPRINT_SEGMENTS = 144;
+const billboardCache = new Map<string, string>();
 
 function footprintRadiusMeters(altitudeKm: number) {
   return Math.acos(EARTH_RADIUS_M / (EARTH_RADIUS_M + Math.max(altitudeKm, 1) * 1000)) * EARTH_RADIUS_M;
@@ -74,7 +76,21 @@ function entityStructureKey(satellites: TrackedSatelliteView[]) {
     .join("|");
 }
 
+function satelliteIdFromEntityId(entityId: string) {
+  for (const suffix of ["-satellite", "-footprint", "-ground-track", "-orbit-track"]) {
+    if (entityId.endsWith(suffix)) {
+      return entityId.slice(0, -suffix.length);
+    }
+  }
+
+  return null;
+}
+
 function satelliteBillboard(color: string) {
+  const cached = billboardCache.get(color);
+  if (cached) {
+    return cached;
+  }
   const canvas = document.createElement("canvas");
   canvas.width = 96;
   canvas.height = 96;
@@ -106,7 +122,9 @@ function satelliteBillboard(color: string) {
   context.arc(48, 48, 7, 0, Math.PI * 2);
   context.fill();
 
-  return canvas.toDataURL("image/png");
+  const dataUrl = canvas.toDataURL("image/png");
+  billboardCache.set(color, dataUrl);
+  return dataUrl;
 }
 
 function setEntityPosition(entity: any, position: any) {
@@ -118,11 +136,17 @@ function setEntityPosition(entity: any, position: any) {
   entity.position = position;
 }
 
-export function Globe3D({ observer, satellites, currentTime, showSunMoon }: Globe3DProps) {
+export function Globe3D({
+  observer,
+  satellites,
+  currentTime,
+  showSunMoon,
+  onSatelliteDoubleClick
+}: Globe3DProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<any>(null);
   const cesiumRef = useRef<any>(null);
-  const cameraInitializedRef = useRef(false);
+  const cameraTargetIdRef = useRef<string | null>(null);
   const observerEntityRef = useRef<any>(null);
   const satelliteEntityIdsRef = useRef<Set<string>>(new Set());
   const footprintStyleRef = useRef<Map<string, string>>(new Map());
@@ -130,15 +154,20 @@ export function Globe3D({ observer, satellites, currentTime, showSunMoon }: Glob
   const billboardStyleRef = useRef<Map<string, string>>(new Map());
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const preUpdateHandlerRef = useRef<(() => void) | null>(null);
+  const doubleClickHandlerRef = useRef<any>(null);
 
   const satellitesRef = useRef(satellites);
+  const satelliteByIdRef = useRef(new Map(satellites.map((satellite) => [satellite.id, satellite])));
   const observerRef = useRef(observer);
   const currentTimeRef = useRef(currentTime);
   const showSunMoonRef = useRef(showSunMoon);
+  const onSatelliteDoubleClickRef = useRef(onSatelliteDoubleClick);
   satellitesRef.current = satellites;
+  satelliteByIdRef.current = new Map(satellites.map((satellite) => [satellite.id, satellite]));
   observerRef.current = observer;
   currentTimeRef.current = currentTime;
   showSunMoonRef.current = showSunMoon;
+  onSatelliteDoubleClickRef.current = onSatelliteDoubleClick;
 
   const structureKey = entityStructureKey(satellites);
   const [viewerReady, setViewerReady] = useState(false);
@@ -150,8 +179,6 @@ export function Globe3D({ observer, satellites, currentTime, showSunMoon }: Glob
       if (!containerRef.current || viewerRef.current) {
         return;
       }
-
-      (window as any).CESIUM_BASE_URL = import.meta.env.PROD ? "cesium/" : "/cesium/";
 
       const Cesium = await import("cesium");
       if (cancelled || !containerRef.current) {
@@ -188,7 +215,9 @@ export function Globe3D({ observer, satellites, currentTime, showSunMoon }: Glob
       viewer.scene.globe.show = true;
       viewer.scene.globe.enableLighting = true;
       viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#101722");
-      viewer.scene.skyAtmosphere.show = true;
+      if (viewer.scene.skyAtmosphere) {
+        viewer.scene.skyAtmosphere.show = true;
+      }
       viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#080b10");
       viewer.scene.light = new Cesium.SunLight({ intensity: 2.3 });
       viewer.scene.sun = new Cesium.Sun();
@@ -239,6 +268,20 @@ export function Globe3D({ observer, satellites, currentTime, showSunMoon }: Glob
 
       preUpdateHandlerRef.current = handlePreUpdate;
       viewer.scene.preUpdate.addEventListener(handlePreUpdate);
+      viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(
+        Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
+      );
+
+      const doubleClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+      doubleClickHandler.setInputAction((movement: { position: any }) => {
+        const picked = viewer.scene.pick(movement.position);
+        const pickedId = typeof picked?.id?.id === "string" ? picked.id.id : undefined;
+        const satelliteId = pickedId ? satelliteIdFromEntityId(pickedId) : null;
+        if (satelliteId) {
+          onSatelliteDoubleClickRef.current?.(satelliteId);
+        }
+      }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+      doubleClickHandlerRef.current = doubleClickHandler;
 
       viewer.resize();
 
@@ -259,13 +302,14 @@ export function Globe3D({ observer, satellites, currentTime, showSunMoon }: Glob
 
     return () => {
       cancelled = true;
-      setViewerReady(false);
       const viewer = viewerRef.current;
       const handler = preUpdateHandlerRef.current;
       if (viewer && handler) {
         viewer.scene.preUpdate.removeEventListener(handler);
       }
       preUpdateHandlerRef.current = null;
+      doubleClickHandlerRef.current?.destroy?.();
+      doubleClickHandlerRef.current = null;
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
       viewerRef.current?.destroy?.();
@@ -276,7 +320,7 @@ export function Globe3D({ observer, satellites, currentTime, showSunMoon }: Glob
       footprintStyleRef.current.clear();
       trackStyleRef.current.clear();
       billboardStyleRef.current.clear();
-      cameraInitializedRef.current = false;
+      cameraTargetIdRef.current = null;
     };
   }, []);
 
@@ -307,7 +351,7 @@ export function Globe3D({ observer, satellites, currentTime, showSunMoon }: Glob
         },
         label: {
           text: `Observer
-New York`,
+${activeObserver.name}`,
           font: "600 13px Inter, sans-serif",
           fillColor: Cesium.Color.fromCssColorString("#f3d29a"),
           outlineColor: Cesium.Color.BLACK,
@@ -319,6 +363,9 @@ New York`,
           disableDepthTestDistance: Number.POSITIVE_INFINITY
         }
       });
+    } else {
+      observerEntityRef.current.label.text = `Observer
+${activeObserver.name}`;
     }
 
     const nextEntityIds = new Set<string>();
@@ -337,7 +384,7 @@ New York`,
         footprintEntity.position = undefined;
         footprintEntity.polygon = {
           hierarchy: new Cesium.CallbackProperty(() => {
-            const tracked = satellitesRef.current.find((entry) => entry.id === satelliteId);
+            const tracked = satelliteByIdRef.current.get(satelliteId);
             if (!tracked) {
               return new Cesium.PolygonHierarchy([]);
             }
@@ -349,7 +396,7 @@ New York`,
         };
         footprintEntity.polyline = {
           positions: new Cesium.CallbackProperty(() => {
-            const tracked = satellitesRef.current.find((entry) => entry.id === satelliteId);
+            const tracked = satelliteByIdRef.current.get(satelliteId);
             if (!tracked) {
               return [];
             }
@@ -409,7 +456,7 @@ New York`,
       const satelliteEntity = viewer.entities.getById(satelliteEntityId) ?? viewer.entities.add({ id: satelliteEntityId });
       if (!satelliteEntity.position) {
         satelliteEntity.position = new Cesium.CallbackProperty(() => {
-          const tracked = satellitesRef.current.find((entry) => entry.id === satelliteId);
+          const tracked = satelliteByIdRef.current.get(satelliteId);
           if (!tracked) {
             return Cesium.Cartesian3.ZERO;
           }
@@ -463,7 +510,7 @@ New York`,
 
     const cameraTarget =
       satellitesRef.current.find((satellite) => satellite.selected) ?? satellitesRef.current[0];
-    if (cameraTarget && !cameraInitializedRef.current) {
+    if (cameraTarget && cameraTargetIdRef.current !== cameraTarget.id) {
       viewer.camera.flyTo({
         destination: Cesium.Cartesian3.fromDegrees(
           cameraTarget.longitudeDeg,
@@ -477,11 +524,16 @@ New York`,
         },
         duration: 1.2
       });
-      cameraInitializedRef.current = true;
+      cameraTargetIdRef.current = cameraTarget.id;
     }
   }, [structureKey, viewerReady]);
 
   return (
-    <div ref={containerRef} className="h-[520px] w-full overflow-hidden rounded-[10px] border border-[var(--line)]" />
+    <div
+      ref={containerRef}
+      className="h-[380px] w-full overflow-hidden rounded-[10px] border border-[var(--line)] sm:h-[460px] lg:h-[520px]"
+      role="img"
+      aria-label="Interactive 3D globe showing tracked satellites"
+    />
   );
 }

@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 const wasmMultiThreadStub = path.resolve("src/shared/passes/wasm-multithread-stub.ts");
+const nodeModuleBrowserStub = path.resolve("src/shared/passes/node-module-browser-stub.ts");
 
 export default defineConfig({
   main: {
@@ -24,12 +25,19 @@ export default defineConfig({
     resolve: {
       alias: {
         "@": path.resolve("src"),
-        "#wasm-multi-thread": wasmMultiThreadStub
+        "#wasm-multi-thread": wasmMultiThreadStub,
+        "node:module": nodeModuleBrowserStub
       }
     },
     define: {
       CESIUM_BASE_URL: JSON.stringify("cesium")
     },
-    plugins: [react(), tailwindcss()]
+    worker: {
+      format: "es"
+    },
+    plugins: [react(), tailwindcss()],
+    build: {
+      chunkSizeWarningLimit: 11000
+    }
   }
 });

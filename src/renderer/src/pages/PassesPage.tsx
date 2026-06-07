@@ -16,9 +16,10 @@ const PASS_COLOR_BY_ELEVATION_KEY = "sat-tracker-passes-color-by-elevation";
 
 function readColorByElevationPreference() {
   try {
-    return sessionStorage.getItem(PASS_COLOR_BY_ELEVATION_KEY) === "true";
+    const stored = sessionStorage.getItem(PASS_COLOR_BY_ELEVATION_KEY);
+    return stored === null ? true : stored === "true";
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -32,9 +33,11 @@ export function PassesPage() {
     getSatelliteColor,
     satellites,
     watchlistIds,
-    selectedSatellite
+    selectedSatellite,
+    previewPassOnTracker
   } = useApp();
   const geometryRef = useRef<HTMLElement | null>(null);
+  const selectedPassRef = useRef(selectedPass);
   const [loading, setLoading] = useState(false);
   const [days, setDays] = useState(7);
   const [error, setError] = useState<string | null>(null);
@@ -55,9 +58,14 @@ export function PassesPage() {
     [visiblePassTargets]
   );
 
+  useEffect(() => {
+    selectedPassRef.current = selectedPass;
+  }, [selectedPass]);
+
   const computePasses = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setPasses([]);
     try {
       const targets = visiblePassTargets;
 
@@ -67,15 +75,22 @@ export function PassesPage() {
         return;
       }
 
-      const end = new Date(Date.now() + days * 86400000);
+      const start = new Date(Math.floor(Date.now() / 60000) * 60000);
+      const end = new Date(start.getTime() + days * 86400000);
       const results = await predictPassesBulk(targets, observer, {
-        start: new Date(),
+        start,
         end,
         minElevationDeg: observer.minElevationDeg,
         stepSeconds: 45
       });
       setPasses(results);
-      selectPass(results[0] ?? null);
+      const previous = selectedPassRef.current;
+      const preserved = previous
+        ? results.find(
+            (pass) => pass.satelliteId === previous.satelliteId && pass.aos === previous.aos
+          )
+        : null;
+      selectPass(preserved ?? (previous ? null : results[0] ?? null));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Pass prediction failed.");
     } finally {
@@ -115,6 +130,14 @@ export function PassesPage() {
     });
   }
 
+  async function exportFile(content: string, name: string) {
+    try {
+      await saveTextFile(content, name);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : `Failed to save ${name}.`);
+    }
+  }
+
   return (
     <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
       <section className="panel p-5">
@@ -138,17 +161,17 @@ export function PassesPage() {
               />
               <span className="mono text-right text-xs text-[var(--text)]">{days}d</span>
             </div>
-            <Button onClick={() => void computePasses()}>{loading ? "Computing..." : "Compute Passes"}</Button>
+            <Button disabled={loading} onClick={() => void computePasses()}>{loading ? "Computing..." : "Compute Passes"}</Button>
             <Button
               variant="secondary"
-              onClick={() => void saveTextFile(passesToCsv(passes), "passes.csv")}
+              onClick={() => void exportFile(passesToCsv(passes), "passes.csv")}
               disabled={passes.length === 0}
             >
               Export CSV
             </Button>
             <Button
               variant="secondary"
-              onClick={() => void saveTextFile(passesToIcs(passes, observer.name), "passes.ics")}
+              onClick={() => void exportFile(passesToIcs(passes, observer.name), "passes.ics")}
               disabled={passes.length === 0}
             >
               Export ICS
@@ -157,6 +180,7 @@ export function PassesPage() {
         </div>
 
         {error ? <p className="mono mt-4 text-sm text-[var(--danger)]">{error}</p> : null}
+        {loading ? <p className="mono mt-4 text-sm text-[var(--muted)]" role="status">Computing passes...</p> : null}
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <label className="flex items-center gap-2.5 text-sm text-[var(--text)]">
@@ -174,12 +198,13 @@ export function PassesPage() {
           ) : null}
         </div>
 
-        <div className="mt-5 overflow-auto">
+        <div className="passes-table mt-5 overflow-auto">
           <table>
             <thead>
               <tr>
                 <th>Satellite</th>
                 <th>AOS</th>
+                <th>Peak</th>
                 <th>LOS</th>
                 <th>Max El</th>
                 <th>Duration</th>
@@ -190,7 +215,12 @@ export function PassesPage() {
               {passes.map((pass) => (
                 <tr
                   key={`${pass.satelliteId}-${pass.aos}`}
-                  className={clsx("cursor-pointer", selectedPass?.aos === pass.aos && "bg-[var(--accent-soft)]")}
+                  className={clsx(
+                    "cursor-pointer",
+                    selectedPass?.satelliteId === pass.satelliteId &&
+                      selectedPass.aos === pass.aos &&
+                      "bg-[var(--accent-soft)]"
+                  )}
                   onClick={() => selectPass(pass)}
                   onDoubleClick={() => inspectPass(pass)}
                   title="Double-click to inspect pass geometry"
@@ -206,6 +236,7 @@ export function PassesPage() {
                     </span>
                   </td>
                   <td className="mono">{formatTimestamp(pass.aos)}</td>
+                  <td className="mono">{formatTimestamp(pass.tca)}</td>
                   <td className="mono">{formatTimestamp(pass.los)}</td>
                   <td
                     className={colorByElevation ? "font-medium" : undefined}
@@ -221,6 +252,13 @@ export function PassesPage() {
                   <td>{pass.illuminated ? "Yes" : "No"}</td>
                 </tr>
               ))}
+              {!loading && passes.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-sm text-[var(--muted)]">
+                    No passes found for the selected satellites and time window.
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
@@ -237,6 +275,9 @@ export function PassesPage() {
                 {selectedPass.rangeKmAtTca.toFixed(0)} km
               </p>
             </div>
+            <Button variant="secondary" size="sm" onClick={() => previewPassOnTracker(selectedPass)}>
+              Preview on tracker
+            </Button>
             <SkyPlot
               samples={selectedPass.samples}
               minElevationDeg={observer.minElevationDeg}

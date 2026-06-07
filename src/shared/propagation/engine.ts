@@ -4,8 +4,8 @@ import {
   ecfToLookAngles,
   eciToEcf,
   eciToGeodetic,
-  geodeticToEcf,
   gstime,
+  jday,
   json2satrec,
   propagate,
   shadowFraction,
@@ -15,16 +15,25 @@ import {
 import { observerToGeodetic, radiansToDegrees } from "@/shared/observer/defaults";
 import { GroundTrackPoint, ObserverSite, OrbitSnapshot, SatelliteRecord } from "@/shared/types";
 
+const satrecCache = new WeakMap<SatelliteRecord, ReturnType<typeof twoline2satrec>>();
+
 export function satrecFromRecord(record: SatelliteRecord) {
+  const cached = satrecCache.get(record);
+  if (cached) {
+    return cached;
+  }
+
+  let satrec: ReturnType<typeof twoline2satrec>;
   if (record.format === "omm" && record.omm) {
-    return json2satrec(record.omm);
+    satrec = json2satrec(record.omm as Parameters<typeof json2satrec>[0]);
+  } else if (record.tle) {
+    satrec = twoline2satrec(record.tle.line1, record.tle.line2);
+  } else {
+    throw new Error(`Satellite ${record.name} does not have usable orbital elements.`);
   }
 
-  if (record.tle) {
-    return twoline2satrec(record.tle.line1, record.tle.line2);
-  }
-
-  throw new Error(`Satellite ${record.name} does not have usable orbital elements.`);
+  satrecCache.set(record, satrec);
+  return satrec;
 }
 
 export function getOrbitMetrics(record: SatelliteRecord) {
@@ -80,30 +89,27 @@ export function computeOrbitSnapshot(record: SatelliteRecord, date: Date, observ
 
 export function buildGroundTrack(
   record: SatelliteRecord,
-  observer: ObserverSite,
   startDate = new Date(),
   points = 90,
   stepSeconds = 30
 ) {
   const track: GroundTrackPoint[] = [];
+  const satrec = satrecFromRecord(record);
 
   for (let index = 0; index < points; index += 1) {
     const date = new Date(startDate.getTime() + index * stepSeconds * 1000);
-    const snapshot = computeOrbitSnapshot(record, date, observer);
+    const result = propagate(satrec, date);
+    if (!result) {
+      continue;
+    }
+    const geodetic = eciToGeodetic(result.position, gstime(date));
     track.push({
-      latitudeDeg: snapshot.latitudeDeg,
-      longitudeDeg: snapshot.longitudeDeg,
-      altitudeKm: snapshot.altitudeKm,
-      timestamp: snapshot.timestamp
+      latitudeDeg: degreesLat(geodetic.latitude),
+      longitudeDeg: degreesLong(geodetic.longitude),
+      altitudeKm: geodetic.height,
+      timestamp: date.toISOString()
     });
   }
 
   return track;
-}
-
-function jday(date: Date) {
-  return (
-    date.getTime() / 86400000 +
-    2440587.5
-  );
 }

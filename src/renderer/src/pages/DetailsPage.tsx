@@ -99,7 +99,7 @@ export function DetailsPage() {
         <p className="label">Upcoming passes</p>
         <div className="mt-4 space-y-3">
           {upcoming.map((pass) => (
-            <div key={pass.aos} className="panel-strong p-4">
+            <div key={`${pass.satelliteId}-${pass.aos}`} className="panel-strong p-4">
               <div className="font-semibold text-[var(--text)]">{formatTimestamp(pass.aos)}</div>
               <div className="mono mt-1.5 text-sm text-[var(--muted)]">
                 Max {pass.maxElevationDeg.toFixed(1)}° · AOS az {pass.aosAzimuthDeg.toFixed(0)}° · LOS az{" "}

@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   addManualElements,
+  addFromNoradId,
+  addFromNoradIds,
   getWatchlistSatellites,
   importFromTleSource,
   listSatellites,
@@ -41,6 +43,12 @@ function writeUiState(partial: StoredUiState) {
   sessionStorage.setItem(UI_STORAGE_KEY, JSON.stringify({ ...readUiState(), ...partial }));
 }
 
+function normalizePage(page: unknown): Page {
+  return page === "catalog" || page === "tracker" || page === "passes" || page === "details" || page === "settings"
+    ? page
+    : "catalog";
+}
+
 interface AppContextValue {
   page: Page;
   setPage: (page: Page) => void;
@@ -57,15 +65,20 @@ interface AppContextValue {
   trackerPreviewRequest: TrackerPreviewRequest | null;
   bootstrapping: boolean;
   error: string | null;
+  clearError: () => void;
   refreshCatalog: (options?: { silent?: boolean }) => Promise<void>;
   selectSatellite: (id: string | null) => void;
   selectPass: (pass: PassPrediction | null) => void;
   previewPassOnTracker: (pass: PassPrediction) => void;
   addManualTle: (raw: string) => Promise<void>;
   addNorad: (noradId: string) => Promise<void>;
+  addNoradBulk: (raw: string) => Promise<{
+    added: SatelliteRecord[];
+    failures: Array<{ id: string; error: string }>;
+  }>;
   importTleSource: (sourceId: string) => Promise<void>;
   refreshSelectedSatellite: () => Promise<void>;
-  toggleWatchlist: (satelliteId: string) => Promise<void>;
+  toggleWatchlist: (satelliteId: string) => Promise<string[]>;
   updateObserver: (observer: ObserverSite) => Promise<void>;
   updateSettings: (partial: Partial<Awaited<ReturnType<typeof getSettings>>>) => Promise<void>;
   getSatelliteColor: (satelliteId: string, orderedIds: string[]) => string;
@@ -78,11 +91,22 @@ let seedPromise: Promise<void> | null = null;
 let autoRefreshPromise: Promise<void> | null = null;
 
 async function fetchInitialSources(appSettings: Awaited<ReturnType<typeof getSettings>>) {
-  const results = await Promise.allSettled(
-    appSettings.tleSources.map(async (source) => ({
-      source,
-      importedCount: await importFromTleSource(source)
-    }))
+  const results: PromiseSettledResult<{ source: (typeof appSettings.tleSources)[number]; importedCount: number }>[] =
+    new Array(appSettings.tleSources.length);
+  await Promise.all(
+    Array.from({ length: Math.min(2, appSettings.tleSources.length) }, async (_, workerIndex) => {
+      for (let index = workerIndex; index < appSettings.tleSources.length; index += 2) {
+        const source = appSettings.tleSources[index];
+        try {
+          results[index] = {
+            status: "fulfilled",
+            value: { source, importedCount: await importFromTleSource(source) }
+          };
+        } catch (reason) {
+          results[index] = { status: "rejected", reason };
+        }
+      }
+    })
   );
 
   const importedAny = results.some(
@@ -115,12 +139,25 @@ function catalogNeedsRefresh(
     ...records.map((record) => new Date(record.fetchedAt).getTime()).filter(Number.isFinite)
   );
 
-  return Number.isFinite(oldestFetch) && Date.now() - oldestFetch >= refreshMs;
+  return !Number.isFinite(oldestFetch) || Date.now() - oldestFetch >= refreshMs;
+}
+
+function chooseDefaultSatelliteId(records: SatelliteRecord[], watchlistIds: string[]) {
+  const firstTracked = watchlistIds.find((id) => records.some((record) => record.id === id));
+  if (firstTracked) {
+    return firstTracked;
+  }
+
+  if (records.length === 0) {
+    return null;
+  }
+
+  return records[Math.floor(Math.random() * records.length)]?.id ?? null;
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const storedUi = readUiState();
-  const [page, setPageState] = useState<Page>(storedUi.page ?? "catalog");
+  const [page, setPageState] = useState<Page>(normalizePage(storedUi.page));
   const [trackerViewMode, setTrackerViewModeState] = useState<"2d" | "3d">(
     storedUi.trackerViewMode ?? "2d"
   );
@@ -150,6 +187,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const selectSatellite = (id: string | null) => {
     setSelectedSatelliteIdState(id);
+    setSelectedPass(null);
     writeUiState({ selectedSatelliteId: id });
   };
 
@@ -174,23 +212,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await ensureSeedData();
       let records = await listSatellites();
       const appSettings = await getSettings();
+      let shouldRefreshInBackground = false;
 
       if (records.length === 0 && !appSettings.initialSourcesFetched) {
         if (!seedPromise) {
-          seedPromise = (async () => {
-            await fetchInitialSources(appSettings);
-          })();
+          seedPromise = fetchInitialSources(appSettings).finally(() => {
+            seedPromise = null;
+          });
         }
         await seedPromise;
         records = await listSatellites();
       } else if (catalogNeedsRefresh(records, appSettings)) {
-        if (!autoRefreshPromise) {
-          autoRefreshPromise = fetchInitialSources(appSettings).finally(() => {
-            autoRefreshPromise = null;
-          });
-        }
-        await autoRefreshPromise;
-        records = await listSatellites();
+        shouldRefreshInBackground = true;
       }
 
       const [activeObserver, nextSettings, watchlist] = await Promise.all([
@@ -213,12 +246,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (restored && records.some((record) => record.id === restored)) {
             next = restored;
           } else {
-            next = records[0]?.id ?? null;
+            next = chooseDefaultSatelliteId(records, watchlist?.satelliteIds ?? []);
           }
         }
         writeUiState({ selectedSatelliteId: next });
         return next;
       });
+
+      if (shouldRefreshInBackground && !autoRefreshPromise) {
+        autoRefreshPromise = fetchInitialSources(appSettings)
+          .then(async () => {
+            const [freshRecords, freshSettings, freshWatchlist] = await Promise.all([
+              listSatellites(),
+              getSettings(),
+              db.watchlists.get("default")
+            ]);
+            setSatellites(freshRecords);
+            setSettings(freshSettings);
+            setWatchlistIds(freshWatchlist?.satelliteIds ?? []);
+            setSelectedSatelliteIdState((current) => {
+              const next = current && freshRecords.some((record) => record.id === current)
+                ? current
+                : chooseDefaultSatelliteId(freshRecords, freshWatchlist?.satelliteIds ?? []);
+              writeUiState({ selectedSatelliteId: next });
+              return next;
+            });
+          })
+          .catch(() => {
+            // Cached data remains usable when a background catalog refresh fails.
+          })
+          .finally(() => {
+            autoRefreshPromise = null;
+          });
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to load catalog.");
     } finally {
@@ -251,7 +311,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setWatchlistIds(ids);
   }
 
-  const value: AppContextValue = {
+  const value = useMemo<AppContextValue>(() => ({
     page,
     setPage,
     trackerViewMode,
@@ -265,7 +325,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       id: "app",
       refreshIntervalValue: 12,
       refreshIntervalUnit: "hours",
-      colorScheme: "dark",
       tleSources: DEFAULT_TLE_SOURCES,
       defaultTleSourceId: "stations",
       trackOnAdd: false,
@@ -277,6 +336,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     trackerPreviewRequest,
     bootstrapping,
     error,
+    clearError: () => setError(null),
     refreshCatalog,
     selectSatellite,
     selectPass: setSelectedPass,
@@ -292,6 +352,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await ensureTracked(record.id);
       await refreshCatalog({ silent: true });
       selectSatellite(record.id);
+    },
+    addNoradBulk: async (raw) => {
+      const result = await addFromNoradIds(raw);
+      for (const record of result.added) {
+        await ensureTracked(record.id);
+      }
+      await refreshCatalog({ silent: true });
+      selectSatellite(result.added[0]?.id ?? null);
+      return result;
     },
     importTleSource: async (sourceId) => {
       const appSettings = await getSettings();
@@ -313,6 +382,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toggleWatchlist: async (satelliteId) => {
       const ids = await toggleWatchlistSatellite("default", satelliteId);
       setWatchlistIds(ids);
+      return ids;
     },
     updateObserver: async (nextObserver) => {
       await db.observers.put(nextObserver);
@@ -337,7 +407,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setSettings(next);
     },
     setPasses
-  };
+  }), [
+    bootstrapping,
+    error,
+    observer,
+    page,
+    passes,
+    selectedPass,
+    selectedSatellite,
+    selectedSatelliteId,
+    satellites,
+    settings,
+    trackerPreviewRequest,
+    trackerViewMode,
+    watchlistIds
+  ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

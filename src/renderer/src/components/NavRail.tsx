@@ -1,16 +1,20 @@
 import { clsx } from "clsx";
-import { Globe2, Orbit, Radar, Settings2, TableProperties } from "lucide-react";
+import { Globe2, Info, Radar, Settings2, TableProperties } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
 const items = [
   { id: "catalog", label: "Catalog", icon: TableProperties },
   { id: "tracker", label: "Tracker", icon: Globe2 },
   { id: "passes", label: "Passes", icon: Radar },
-  { id: "details", label: "Details", icon: Orbit },
+  { id: "details", label: "Details", icon: Info },
   { id: "settings", label: "Settings", icon: Settings2 }
 ] as const;
 
-export function NavRail() {
+interface NavRailProps {
+  onNavigate?: () => void;
+}
+
+export function NavRail({ onNavigate }: NavRailProps) {
   const { page, setPage } = useApp();
 
   return (
@@ -19,7 +23,6 @@ export function NavRail() {
         <img className="h-8 w-8 rounded-lg" src="/sat-tracker-icon.svg" alt="" />
         <div>
           <div className="text-sm font-semibold leading-tight text-[var(--text)]">Sat Tracker</div>
-          <div className="text-xs leading-tight text-[var(--faint)]">Orbital ops</div>
         </div>
       </div>
       {items.map((item) => {
@@ -28,8 +31,13 @@ export function NavRail() {
         return (
           <button
             key={item.id}
+            type="button"
             className={clsx("nav-item", active && "active")}
-            onClick={() => setPage(item.id)}
+            aria-current={active ? "page" : undefined}
+            onClick={() => {
+              setPage(item.id);
+              onNavigate?.();
+            }}
           >
             <Icon size={17} style={active ? { color: "var(--accent)" } : undefined} />
             {item.label}

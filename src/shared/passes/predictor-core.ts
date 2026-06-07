@@ -12,6 +12,16 @@ function elevationAt(record: SatelliteRecord, observer: ObserverSite, date: Date
   return computeOrbitSnapshot(record, date, observer).elevationDeg;
 }
 
+function validateOptions(start: Date, end: Date, stepSeconds: number) {
+  if (!Number.isFinite(stepSeconds) || stepSeconds <= 0) {
+    throw new Error("Pass prediction stepSeconds must be greater than zero.");
+  }
+
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+    throw new Error("Pass prediction end time must be after the start time.");
+  }
+}
+
 function refineBoundary(
   record: SatelliteRecord,
   observer: ObserverSite,
@@ -45,16 +55,75 @@ function buildSamples(
 ) {
   const samples: PassSample[] = [];
   for (let time = aos.getTime(); time <= los.getTime(); time += sampleStepSeconds * 1000) {
-    const snapshot = computeOrbitSnapshot(record, new Date(time), observer);
-    samples.push({
-      timestamp: snapshot.timestamp,
-      elevationDeg: snapshot.elevationDeg,
-      azimuthDeg: snapshot.azimuthDeg,
-      rangeKm: snapshot.rangeKm
-    });
+    try {
+      const snapshot = computeOrbitSnapshot(record, new Date(time), observer);
+      samples.push({
+        timestamp: snapshot.timestamp,
+        elevationDeg: snapshot.elevationDeg,
+        azimuthDeg: snapshot.azimuthDeg,
+        rangeKm: snapshot.rangeKm
+      });
+    } catch {
+      // A decayed or otherwise invalid orbit should not fail every other pass.
+    }
+  }
+
+  if (samples.at(-1)?.timestamp !== los.toISOString()) {
+    try {
+      const snapshot = computeOrbitSnapshot(record, los, observer);
+      samples.push({
+        timestamp: snapshot.timestamp,
+        elevationDeg: snapshot.elevationDeg,
+        azimuthDeg: snapshot.azimuthDeg,
+        rangeKm: snapshot.rangeKm
+      });
+    } catch {
+      // The caller will discard passes without usable samples.
+    }
   }
 
   return samples;
+}
+
+function buildPass(
+  record: SatelliteRecord,
+  observer: ObserverSite,
+  passStart: Date,
+  passEnd: Date
+): PassPrediction | null {
+  const samples = buildSamples(record, observer, passStart, passEnd);
+  if (samples.length === 0) {
+    return null;
+  }
+
+  const tcaSample = samples.reduce(
+    (best, sample) => (sample.elevationDeg > best.elevationDeg ? sample : best),
+    samples[0]
+  );
+
+  try {
+    const aosSnapshot = computeOrbitSnapshot(record, passStart, observer);
+    const losSnapshot = computeOrbitSnapshot(record, passEnd, observer);
+    const tcaSnapshot = computeOrbitSnapshot(record, new Date(tcaSample.timestamp), observer);
+
+    return {
+      satelliteId: record.id,
+      satelliteName: record.name,
+      aos: passStart.toISOString(),
+      los: passEnd.toISOString(),
+      tca: tcaSample.timestamp,
+      maxElevationDeg: tcaSample.elevationDeg,
+      durationSec: (passEnd.getTime() - passStart.getTime()) / 1000,
+      aosAzimuthDeg: aosSnapshot.azimuthDeg,
+      tcaAzimuthDeg: tcaSnapshot.azimuthDeg,
+      losAzimuthDeg: losSnapshot.azimuthDeg,
+      rangeKmAtTca: tcaSnapshot.rangeKm,
+      illuminated: tcaSnapshot.sunlit,
+      samples
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function predictPassesForSatellite(
@@ -67,64 +136,76 @@ export function predictPassesForSatellite(
   const minElevationDeg = options.minElevationDeg ?? observer.minElevationDeg;
   const stepSeconds = options.stepSeconds ?? 30;
   const passes: PassPrediction[] = [];
+  validateOptions(start, end, stepSeconds);
 
-  let inPass = false;
-  let passStart: Date | null = null;
+  let previous = start;
+  let previousElevation: number;
+  try {
+    previousElevation = elevationAt(record, observer, previous);
+  } catch {
+    return [];
+  }
 
-  const totalSteps = Math.ceil((end.getTime() - start.getTime()) / (stepSeconds * 1000));
+  let inPass = previousElevation >= minElevationDeg;
+  let passStart: Date | null = inPass ? start : null;
+  const stepMs = stepSeconds * 1000;
 
-  for (let index = 0; index <= totalSteps; index += 1) {
-    const current = new Date(start.getTime() + index * stepSeconds * 1000);
-    const next = new Date(current.getTime() + stepSeconds * 1000);
-    const currentElevation = elevationAt(record, observer, current);
-    const nextElevation = index === totalSteps ? -90 : elevationAt(record, observer, next);
-    const currentlyAbove = currentElevation >= minElevationDeg;
-    const nextAbove = nextElevation >= minElevationDeg;
-
-    if (!inPass && currentlyAbove) {
-      inPass = true;
-      passStart = refineBoundary(
-        record,
-        observer,
-        new Date(current.getTime() - stepSeconds * 1000),
-        current,
-        true,
-        minElevationDeg
-      );
+  for (let time = Math.min(start.getTime() + stepMs, end.getTime()); time <= end.getTime();) {
+    const current = new Date(time);
+    let currentElevation: number;
+    try {
+      currentElevation = elevationAt(record, observer, current);
+    } catch {
+      inPass = false;
+      passStart = null;
+      previous = current;
+      previousElevation = Number.NEGATIVE_INFINITY;
+      time = Math.min(time + stepMs, end.getTime());
+      if (time === current.getTime()) {
+        break;
+      }
+      continue;
     }
 
-    if (inPass && passStart && !nextAbove) {
-      const passEnd = refineBoundary(record, observer, current, next, false, minElevationDeg);
-      const samples = buildSamples(record, observer, passStart, passEnd);
-      const tcaSample = samples.reduce((best, sample) =>
-        sample.elevationDeg > best.elevationDeg ? sample : best
-      );
-      const aosSnapshot = computeOrbitSnapshot(record, passStart, observer);
-      const losSnapshot = computeOrbitSnapshot(record, passEnd, observer);
-      const tcaSnapshot = computeOrbitSnapshot(record, new Date(tcaSample.timestamp), observer);
+    const previousAbove = previousElevation >= minElevationDeg;
+    const currentlyAbove = currentElevation >= minElevationDeg;
 
-      passes.push({
-        satelliteId: record.id,
-        satelliteName: record.name,
-        aos: passStart.toISOString(),
-        los: passEnd.toISOString(),
-        tca: tcaSample.timestamp,
-        maxElevationDeg: tcaSample.elevationDeg,
-        durationSec: (passEnd.getTime() - passStart.getTime()) / 1000,
-        aosAzimuthDeg: aosSnapshot.azimuthDeg,
-        tcaAzimuthDeg: tcaSnapshot.azimuthDeg,
-        losAzimuthDeg: losSnapshot.azimuthDeg,
-        rangeKmAtTca: tcaSnapshot.rangeKm,
-        illuminated: tcaSnapshot.sunlit,
-        samples
-      });
-
+    if (!inPass && !previousAbove && currentlyAbove) {
+      inPass = true;
+      passStart = refineBoundary(record, observer, previous, current, true, minElevationDeg);
+    } else if (inPass && passStart && previousAbove && !currentlyAbove) {
+      const passEnd = refineBoundary(record, observer, previous, current, false, minElevationDeg);
+      const pass = buildPass(record, observer, passStart, passEnd);
+      if (pass) {
+        passes.push(pass);
+      }
       inPass = false;
       passStart = null;
     }
+
+    previous = current;
+    previousElevation = currentElevation;
+    const nextTime = Math.min(time + stepMs, end.getTime());
+    if (nextTime === time) {
+      break;
+    }
+    time = nextTime;
   }
 
   return passes;
+}
+
+function csvCell(value: string) {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function icsText(value: string) {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\r", "")
+    .replaceAll("\n", "\\n")
+    .replaceAll(",", "\\,")
+    .replaceAll(";", "\\;");
 }
 
 export function passesToCsv(passes: PassPrediction[]) {
@@ -144,7 +225,7 @@ export function passesToCsv(passes: PassPrediction[]) {
 
   const rows = passes.map((pass) =>
     [
-      `"${pass.satelliteName}"`,
+      csvCell(pass.satelliteName),
       pass.aos,
       pass.los,
       pass.tca,
@@ -167,10 +248,10 @@ export function passesToIcs(passes: PassPrediction[], observerName: string) {
       const uid = `${pass.satelliteId}-${pass.aos}`;
       return [
         "BEGIN:VEVENT",
-        `UID:${uid}`,
+        `UID:${icsText(uid)}`,
         `DTSTART:${pass.aos.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")}`,
         `DTEND:${pass.los.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")}`,
-        `SUMMARY:${pass.satelliteName} pass over ${observerName}`,
+        `SUMMARY:${icsText(`${pass.satelliteName} pass over ${observerName}`)}`,
         `DESCRIPTION:Max elevation ${pass.maxElevationDeg.toFixed(1)} deg`,
         "END:VEVENT"
       ].join("\r\n");

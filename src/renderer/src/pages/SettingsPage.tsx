@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createUrlTleSource,
   refreshIntervalToHours,
@@ -21,14 +21,55 @@ export function SettingsPage() {
   const { observer, settings, updateObserver, updateSettings, refreshCatalog } = useApp();
   const [draft, setDraft] = useState(observer);
   const [saved, setSaved] = useState<string | null>(null);
+  const [savedIsError, setSavedIsError] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [importStatusIsError, setImportStatusIsError] = useState(false);
   const [importingAll, setImportingAll] = useState(false);
+  const observerDirtyRef = useRef(false);
+  const sourceUrlsDirtyRef = useRef(false);
+  const [refreshIntervalDraft, setRefreshIntervalDraft] = useState(String(settings.refreshIntervalValue));
   const [sourceUrls, setSourceUrls] = useState(() =>
     settings.tleSources.map((source) => tleSourceUrl(source)).join("\n")
   );
 
+  useEffect(() => {
+    if (!observerDirtyRef.current) {
+      setDraft(observer);
+    }
+  }, [observer]);
+
+  useEffect(() => {
+    if (!sourceUrlsDirtyRef.current) {
+      setSourceUrls(settings.tleSources.map((source) => tleSourceUrl(source)).join("\n"));
+    }
+  }, [settings.tleSources]);
+
+  useEffect(() => {
+    setRefreshIntervalDraft(String(settings.refreshIntervalValue));
+  }, [settings.refreshIntervalValue]);
+
   async function save() {
-    await updateObserver(draft);
+    const valid =
+      draft.name.trim().length > 0 &&
+      Number.isFinite(draft.latitude) &&
+      draft.latitude >= -90 &&
+      draft.latitude <= 90 &&
+      Number.isFinite(draft.longitude) &&
+      draft.longitude >= -180 &&
+      draft.longitude <= 180 &&
+      Number.isFinite(draft.altitudeM) &&
+      Number.isFinite(draft.minElevationDeg) &&
+      draft.minElevationDeg >= 0 &&
+      draft.minElevationDeg <= 90;
+    if (!valid) {
+      setSavedIsError(true);
+      setSaved("Enter valid observer coordinates and a 0-90° elevation mask.");
+      return;
+    }
+
+    await updateObserver({ ...draft, name: draft.name.trim() });
+    observerDirtyRef.current = false;
+    setSavedIsError(false);
     setSaved("Observer saved.");
   }
 
@@ -41,6 +82,8 @@ export function SettingsPage() {
 
   async function saveSourceUrls() {
     await updateTleSources(buildSourcesFromText());
+    sourceUrlsDirtyRef.current = false;
+    setImportStatusIsError(false);
     setImportStatus("Sources saved.");
   }
 
@@ -64,19 +107,40 @@ export function SettingsPage() {
     try {
       const sources = buildSourcesFromText();
       await updateTleSources(sources);
-      const results = await Promise.allSettled(sources.map((source) => importFromTleSource(source)));
-      const failures = results.filter((result) => result.status === "rejected").length;
+      let failures = 0;
+      await Promise.all(
+        Array.from({ length: Math.min(2, sources.length) }, async (_, workerIndex) => {
+          for (let index = workerIndex; index < sources.length; index += 2) {
+            try {
+              await importFromTleSource(sources[index]);
+            } catch {
+              failures += 1;
+            }
+          }
+        })
+      );
       if (failures < sources.length) {
         await refreshCatalog({ silent: true });
       }
       if (failures > 0) {
+        setImportStatusIsError(true);
         setImportStatus(`${sources.length - failures} sources updated, ${failures} failed.`);
       } else {
+        setImportStatusIsError(false);
         setImportStatus("All sources updated.");
       }
     } finally {
       setImportingAll(false);
     }
+  }
+
+  async function saveRefreshInterval() {
+    const value = Number(refreshIntervalDraft);
+    if (!Number.isFinite(value) || value < 1) {
+      setRefreshIntervalDraft(String(settings.refreshIntervalValue));
+      return;
+    }
+    await updateSettings({ refreshIntervalValue: value });
   }
 
   const staleAfterHours = refreshIntervalToHours(
@@ -102,15 +166,19 @@ export function SettingsPage() {
             <label key={key} className="block space-y-1.5">
               <span className="text-xs font-medium text-[var(--faint)]">{label}</span>
               <input
+                type={key === "name" ? "text" : "number"}
                 value={String(draft[key as keyof typeof draft] ?? "")}
                 onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    [key]:
-                      key === "name"
-                        ? event.target.value
-                        : Number(event.target.value)
-                  })
+                  {
+                    observerDirtyRef.current = true;
+                    const value = key === "name" ? event.target.value : event.target.valueAsNumber;
+                    if (key === "name" || Number.isFinite(value)) {
+                      setDraft({
+                        ...draft,
+                        [key]: value
+                      });
+                    }
+                  }
                 }
               />
             </label>
@@ -126,12 +194,17 @@ export function SettingsPage() {
             variant="secondary"
             onClick={() => {
               navigator.geolocation.getCurrentPosition((position) => {
+                observerDirtyRef.current = true;
+                setSaved(null);
                 setDraft((current) => ({
                   ...current,
                   latitude: position.coords.latitude,
                   longitude: position.coords.longitude,
                   altitudeM: position.coords.altitude ?? current.altitudeM
                 }));
+              }, (error) => {
+                setSavedIsError(true);
+                setSaved(error.message || "Browser location permission was denied.");
               });
             }}
           >
@@ -139,7 +212,7 @@ export function SettingsPage() {
           </Button>
         </div>
 
-        {saved ? <p className="mono mt-4 text-sm text-[var(--accent)]">{saved}</p> : null}
+        {saved ? <p className={`mono mt-4 text-sm ${savedIsError ? "text-[var(--danger)]" : "text-[var(--accent)]"}`}>{saved}</p> : null}
       </section>
 
       <div className="space-y-6">
@@ -153,10 +226,14 @@ export function SettingsPage() {
               <input
                 type="number"
                 min={1}
-                value={settings.refreshIntervalValue}
-                onChange={(event) =>
-                  void updateSettings({ refreshIntervalValue: Number(event.target.value) })
-                }
+                value={refreshIntervalDraft}
+                onChange={(event) => setRefreshIntervalDraft(event.target.value)}
+                onBlur={() => void saveRefreshInterval()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  }
+                }}
               />
             </label>
             <label className="block space-y-1.5">
@@ -215,7 +292,7 @@ export function SettingsPage() {
             </div>
           </div>
 
-          {importStatus ? <p className="mono mt-3 text-sm text-[var(--accent)]">{importStatus}</p> : null}
+          {importStatus ? <p className={`mono mt-3 text-sm ${importStatusIsError ? "text-[var(--danger)]" : "text-[var(--accent)]"}`}>{importStatus}</p> : null}
 
           <div className="mt-6">
             <label className="block space-y-1.5">
@@ -223,7 +300,10 @@ export function SettingsPage() {
               <textarea
                 className="mono min-h-[280px] resize-y text-xs leading-relaxed"
                 value={sourceUrls}
-                onChange={(event) => setSourceUrls(event.target.value)}
+                onChange={(event) => {
+                  sourceUrlsDirtyRef.current = true;
+                  setSourceUrls(event.target.value);
+                }}
                 placeholder={`https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=JSON
 https://example.com/catalog.tle`}
               />
@@ -234,7 +314,10 @@ https://example.com/catalog.tle`}
               </Button>
               <Button
                 variant="ghost"
-                onClick={() => setSourceUrls(settings.tleSources.map((source) => tleSourceUrl(source)).join("\n"))}
+                onClick={() => {
+                  sourceUrlsDirtyRef.current = false;
+                  setSourceUrls(settings.tleSources.map((source) => tleSourceUrl(source)).join("\n"));
+                }}
               >
                 Revert
               </Button>

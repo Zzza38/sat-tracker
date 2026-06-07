@@ -10,15 +10,18 @@ export function CatalogPage() {
     watchlistIds,
     addManualTle,
     addNorad,
-    selectSatellite,
-    setPage,
+    addNoradBulk,
     toggleWatchlist
   } = useApp();
   const [query, setQuery] = useState("");
   const [noradId, setNoradId] = useState("");
   const [manualTle, setManualTle] = useState("");
+  const [bulkNoradIds, setBulkNoradIds] = useState("");
+  const [pasteMode, setPasteMode] = useState<"tle" | "norad">("tle");
   const [showManual, setShowManual] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [statusIsError, setStatusIsError] = useState(false);
 
   const filtered = useMemo(
     () => sortSatellites(searchSatellites(satellites, query), watchlistIds),
@@ -29,20 +32,48 @@ export function CatalogPage() {
 
   async function run(action: () => Promise<void>) {
     setStatus(null);
+    setBusy(true);
     try {
       await action();
+      setStatusIsError(false);
       setStatus("Added.");
       setNoradId("");
       setManualTle("");
+      setBulkNoradIds("");
       setShowManual(false);
     } catch (caught) {
+      setStatusIsError(true);
       setStatus(caught instanceof Error ? caught.message : "Request failed.");
+    } finally {
+      setBusy(false);
     }
   }
 
-  function openDetails(id: string) {
-    selectSatellite(id);
-    setPage("details");
+  async function toggleTracking(id: string) {
+    await toggleWatchlist(id);
+  }
+
+  async function runBulkNorad() {
+    setStatus(null);
+    setBusy(true);
+    try {
+      const result = await addNoradBulk(bulkNoradIds);
+      const parts = [`Added ${result.added.length} satellite${result.added.length === 1 ? "" : "s"}.`];
+      if (result.failures.length > 0) {
+        parts.push(
+          `${result.failures.length} failed (${result.failures.map((failure) => failure.id).join(", ")}).`
+        );
+      }
+      setStatus(parts.join(" "));
+      setStatusIsError(result.failures.length > 0);
+      setBulkNoradIds("");
+      setShowManual(false);
+    } catch (caught) {
+      setStatusIsError(true);
+      setStatus(caught instanceof Error ? caught.message : "Request failed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -79,8 +110,8 @@ export function CatalogPage() {
               }}
             />
           </label>
-          <Button disabled={!noradId.trim()} onClick={() => run(() => addNorad(noradId.trim()))}>
-            Add
+          <Button disabled={busy || !noradId.trim()} onClick={() => run(() => addNorad(noradId.trim()))}>
+            {busy ? "Adding..." : "Add"}
           </Button>
           <Button variant="secondary" onClick={() => setShowManual((current) => !current)}>
             {showManual ? <ChevronUp size={14} className="mr-1 inline" /> : <ChevronDown size={14} className="mr-1 inline" />}
@@ -90,21 +121,59 @@ export function CatalogPage() {
 
         {showManual ? (
           <div className="mt-4 space-y-3 border-t border-[var(--line)] pt-4">
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-[var(--faint)]">Manual TLE / OMM</span>
-              <textarea
-                value={manualTle}
-                onChange={(event) => setManualTle(event.target.value)}
-                placeholder="Paste 2LE, 3LE, or OMM JSON"
-              />
-            </label>
-            <Button variant="secondary" disabled={!manualTle.trim()} onClick={() => run(() => addManualTle(manualTle))}>
-              Add from paste
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant={pasteMode === "tle" ? "default" : "secondary"}
+                onClick={() => setPasteMode("tle")}
+              >
+                TLE / OMM
+              </Button>
+              <Button
+                size="sm"
+                variant={pasteMode === "norad" ? "default" : "secondary"}
+                onClick={() => setPasteMode("norad")}
+              >
+                NORAD IDs
+              </Button>
+            </div>
+            {pasteMode === "tle" ? (
+              <>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-[var(--faint)]">Manual TLE / OMM</span>
+                  <textarea
+                    value={manualTle}
+                    onChange={(event) => setManualTle(event.target.value)}
+                    placeholder="Paste 2LE, 3LE, or OMM JSON"
+                  />
+                </label>
+                <Button
+                  variant="secondary"
+                  disabled={busy || !manualTle.trim()}
+                  onClick={() => run(() => addManualTle(manualTle))}
+                >
+                  Add from paste
+                </Button>
+              </>
+            ) : (
+              <>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-[var(--faint)]">Bulk NORAD IDs</span>
+                  <textarea
+                    value={bulkNoradIds}
+                    onChange={(event) => setBulkNoradIds(event.target.value)}
+                    placeholder={"25544\n43013\n48274\n\nOr comma-separated: 25544, 43013, 48274"}
+                  />
+                </label>
+                <Button variant="secondary" disabled={busy || !bulkNoradIds.trim()} onClick={() => void runBulkNorad()}>
+                  Add from paste
+                </Button>
+              </>
+            )}
           </div>
         ) : null}
 
-        {status ? <p className="mono mt-3 text-sm text-[var(--accent)]">{status}</p> : null}
+        {status ? <p className={`mono mt-3 text-sm ${statusIsError ? "text-[var(--danger)]" : "text-[var(--accent)]"}`}>{status}</p> : null}
       </div>
 
       <div className="mt-5 overflow-auto">
@@ -132,15 +201,13 @@ export function CatalogPage() {
                     <td className="mono">{record.noradId}</td>
                     <td>
                       <div className="flex justify-end gap-2">
-                        <Button className="w-[92px]" variant="secondary" size="sm" onClick={() => openDetails(record.id)}>
-                          Details
-                        </Button>
                         <Button
                           className="w-[92px]"
                           variant={tracked ? "default" : "secondary"}
                           size="sm"
+                          disabled={busy}
                           title={tracked ? "Click to stop tracking" : "Click to track this satellite"}
-                          onClick={() => void toggleWatchlist(record.id)}
+                          onClick={() => void toggleTracking(record.id)}
                         >
                           {tracked ? "Tracking" : "Track"}
                         </Button>

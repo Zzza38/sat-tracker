@@ -14,6 +14,7 @@ import { ObserverSite, PassPrediction, SatelliteRecord } from "@/shared/types";
 import { satrecFromRecord } from "@/shared/propagation/engine";
 
 let runtimePromise: ReturnType<typeof createSingleThreadRuntime> | null = null;
+const MAX_BULK_DATES = 10000;
 
 async function getRuntime() {
   if (!runtimePromise) {
@@ -32,17 +33,38 @@ export async function predictPassesBulkWasm(
     return records.flatMap((record) => predictPassesForSatellite(record, observer, options));
   }
 
-  const runtime = await getRuntime();
   const start = options.start ?? new Date();
   const end = options.end ?? new Date(start.getTime() + 2 * 86400000);
   const minElevationDeg = options.minElevationDeg ?? observer.minElevationDeg;
-  const stepSeconds = options.stepSeconds ?? 60;
+  const requestedStepSeconds = options.stepSeconds ?? 60;
+  if (!Number.isFinite(requestedStepSeconds) || requestedStepSeconds <= 0) {
+    throw new Error("Pass prediction stepSeconds must be greater than zero.");
+  }
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+    throw new Error("Pass prediction end time must be after the start time.");
+  }
+  const durationSeconds = (end.getTime() - start.getTime()) / 1000;
+  const stepSeconds = Math.max(requestedStepSeconds, Math.ceil(durationSeconds / MAX_BULK_DATES));
   const observerGeodetic = observerToGeodetic(observer);
-  const satRecs = records.map((record) => satrecFromRecord(record));
+  const validRecords = records.flatMap((record) => {
+    try {
+      return [{ record, satrec: satrecFromRecord(record) }];
+    } catch {
+      return [];
+    }
+  });
+  if (validRecords.length === 0) {
+    return [];
+  }
+  const runtime = await getRuntime();
+  const satRecs = validRecords.map(({ satrec }) => satrec);
 
   const dates: Date[] = [];
   for (let time = start.getTime(); time <= end.getTime(); time += stepSeconds * 1000) {
     dates.push(new Date(time));
+  }
+  if (dates.at(-1)?.getTime() !== end.getTime()) {
+    dates.push(end);
   }
 
   using propagator = new BulkPropagator({
@@ -65,13 +87,15 @@ export async function predictPassesBulkWasm(
 
   const allPasses: PassPrediction[] = [];
 
-  records.forEach((record, satIndex) => {
+  validRecords.forEach(({ record }, satIndex) => {
     let inPass = false;
     let passStartIndex = -1;
 
     dates.forEach((date, dateIndex) => {
       const output = propagator.getFormattedOutput(satIndex, dateIndex);
       if (!output?.lookAngles) {
+        inPass = false;
+        passStartIndex = -1;
         return;
       }
 
@@ -83,8 +107,7 @@ export async function predictPassesBulkWasm(
         passStartIndex = dateIndex;
       }
 
-      const isLast = dateIndex === dates.length - 1;
-      if (inPass && (!above || isLast)) {
+      if (inPass && !above) {
         const passStart = dates[Math.max(passStartIndex, 0)];
         const passEnd = date;
         const refined = predictPassesForSatellite(record, observer, {
@@ -94,7 +117,17 @@ export async function predictPassesBulkWasm(
           stepSeconds: 20
         });
 
-        allPasses.push(...refined);
+        for (const pass of refined) {
+          const duplicate = allPasses.some(
+            (existing) =>
+              existing.satelliteId === pass.satelliteId &&
+              Math.abs(new Date(existing.aos).getTime() - new Date(pass.aos).getTime()) <
+                stepSeconds * 1000
+          );
+          if (!duplicate) {
+            allPasses.push(pass);
+          }
+        }
         inPass = false;
         passStartIndex = -1;
       }

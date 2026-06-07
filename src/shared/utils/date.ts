@@ -1,11 +1,3 @@
-export function addHours(date: Date, hours: number) {
-  return new Date(date.getTime() + hours * 3600000);
-}
-
-export function addDays(date: Date, days: number) {
-  return new Date(date.getTime() + days * 86400000);
-}
-
 export function formatTimestamp(value: string | Date) {
   const date = typeof value === "string" ? new Date(value) : value;
   return date.toLocaleString(undefined, {
@@ -18,8 +10,9 @@ export function formatTimestamp(value: string | Date) {
 }
 
 export function formatDuration(seconds: number) {
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.round(seconds % 60);
+  const rounded = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
   return `${minutes}m ${remainder}s`;
 }
 
@@ -77,19 +70,4 @@ export function epochAgeDays(epoch?: string, reference = new Date()) {
   }
 
   return (reference.getTime() - epochDate.getTime()) / 86400000;
-}
-
-export function isStale(epoch?: string, fetchedAt?: string, maxAgeHours = 12) {
-  const ageDays = epochAgeDays(epoch);
-  if (ageDays !== undefined && ageDays > 3) {
-    return true;
-  }
-
-  if (!fetchedAt) {
-    return true;
-  }
-
-  const fetched = new Date(fetchedAt);
-  const hoursSinceFetch = (Date.now() - fetched.getTime()) / 3600000;
-  return hoursSinceFetch > maxAgeHours;
 }

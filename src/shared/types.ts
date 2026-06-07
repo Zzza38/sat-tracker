@@ -105,7 +105,6 @@ export interface TleSource {
 export interface AppSettings {
   refreshIntervalValue: number;
   refreshIntervalUnit: RefreshIntervalUnit;
-  colorScheme: "dark";
   tleSources: TleSource[];
   defaultTleSourceId: string;
   trackOnAdd: boolean;

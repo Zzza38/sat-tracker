@@ -108,8 +108,13 @@ function parseTleInput(raw: string): ParsedElementInput {
 }
 
 function parseOmmInput(raw: string): ParsedElementInput {
-  const parsed = JSON.parse(raw) as OmmElements;
-  const satrec = json2satrec(parsed);
+  let parsed: OmmElements;
+  try {
+    parsed = JSON.parse(raw) as OmmElements;
+  } catch {
+    throw new Error("The OMM payload is not valid JSON.");
+  }
+  const satrec = json2satrec(parsed as Parameters<typeof json2satrec>[0]);
   const noradId = String(parsed.NORAD_CAT_ID ?? satrec.satnum);
   return {
     name: String(parsed.OBJECT_NAME ?? `NORAD ${noradId}`),

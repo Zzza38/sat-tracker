@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { Clock3, Pause, Play, RotateCcw, SunMoon } from "lucide-react";
 import { buildGroundTrack, computeOrbitSnapshot } from "@/shared/propagation/engine";
+import { predictPassesForSatellite } from "@/shared/passes/predictor-core";
+import { formatDuration, formatTimestamp } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
 import { useTicker } from "../hooks/useTicker";
 import { Globe3D } from "../components/Globe3D";
 import { Map2D, type TrackedSatelliteView } from "../components/Map2D";
+import { RadarScope } from "../components/RadarScope";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Slider } from "../components/ui/slider";
@@ -14,6 +17,7 @@ const TRACK_STEP_SECONDS = 60;
 const INITIAL_TIMELINE_MIN_MINUTES = -180;
 const INITIAL_TIMELINE_MAX_MINUTES = 180;
 const TIMELINE_STEP_MINUTES = 0.5;
+const TRACKER_STATE_KEY = "sat-tracker-timeline";
 
 type TimelineDragState = {
   pointerId: number;
@@ -65,7 +69,28 @@ function rangeForTimelineOffset(minutes: number) {
   };
 }
 
+function readTrackerState() {
+  try {
+    return JSON.parse(sessionStorage.getItem(TRACKER_STATE_KEY) ?? "{}") as {
+      currentTime?: string;
+      live?: boolean;
+      playing?: boolean;
+      playbackSpeed?: number;
+      showSunMoon?: boolean;
+    };
+  } catch {
+    return {};
+  }
+}
+
 export function TrackerPage() {
+  const storedTrackerState = useMemo(readTrackerState, []);
+  const initialAnchor = Date.now();
+  const storedOffset =
+    storedTrackerState.live === false && storedTrackerState.currentTime
+      ? (new Date(storedTrackerState.currentTime).getTime() - initialAnchor) / 60000
+      : 0;
+  const initialOffset = Number.isFinite(storedOffset) ? storedOffset : 0;
   const {
     satellites,
     watchlistIds,
@@ -77,16 +102,20 @@ export function TrackerPage() {
     trackerPreviewRequest,
     selectSatellite,
     toggleWatchlist,
+    refreshSelectedSatellite,
     getSatelliteColor,
     setSatelliteColor
   } = useApp();
   const visibleSatellites = useMemo(() => {
     if (watchlistIds.length > 0) {
       const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
-      return watchlistIds.flatMap((id) => {
+      const watched = watchlistIds.flatMap((id) => {
         const satellite = recordsById.get(id);
         return satellite ? [satellite] : [];
       });
+      return selectedSatellite && !watchlistIds.includes(selectedSatellite.id)
+        ? [selectedSatellite, ...watched]
+        : watched;
     }
 
     return selectedSatellite ? [selectedSatellite] : [];
@@ -95,19 +124,17 @@ export function TrackerPage() {
     () => visibleSatellites.map((satellite) => satellite.id),
     [visibleSatellites]
   );
-  const timelineAnchorRef = useRef(Date.now());
+  const timelineAnchorRef = useRef(initialAnchor);
   const timelineDragRef = useRef<TimelineDragState | null>(null);
-  const [timelineOffsetMin, setTimelineOffsetMin] = useState(0);
-  const [timelineRange, setTimelineRange] = useState({
-    min: INITIAL_TIMELINE_MIN_MINUTES,
-    max: INITIAL_TIMELINE_MAX_MINUTES
-  });
-  const [timelineLive, setTimelineLive] = useState(true);
-  const [timelinePlaying, setTimelinePlaying] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
-  const [showSunMoon, setShowSunMoon] = useState(true);
-  const liveNow = useTicker(1000 / 30);
-  const playbackNow = useTicker(1000 / 30);
+  const dataPanelRef = useRef<HTMLElement | null>(null);
+  const [timelineOffsetMin, setTimelineOffsetMin] = useState(initialOffset);
+  const [timelineRange, setTimelineRange] = useState(rangeForTimelineOffset(initialOffset));
+  const [timelineLive, setTimelineLive] = useState(storedTrackerState.live ?? true);
+  const [timelinePlaying, setTimelinePlaying] = useState(storedTrackerState.playing ?? false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(storedTrackerState.playbackSpeed ?? 1);
+  const [showSunMoon, setShowSunMoon] = useState(storedTrackerState.showSunMoon ?? true);
+  const liveNow = useTicker(100);
+  const playbackNow = useTicker(50);
   const previousPlaybackTickRef = useRef(playbackNow.getTime());
   const currentTime = useMemo(
     () =>
@@ -116,6 +143,30 @@ export function TrackerPage() {
         : new Date(timelineAnchorRef.current + timelineOffsetMin * 60000),
     [liveNow, timelineLive, timelineOffsetMin]
   );
+  const persistedStateRef = useRef({
+    currentTime: currentTime.toISOString(),
+    live: timelineLive,
+    playing: timelinePlaying,
+    playbackSpeed,
+    showSunMoon
+  });
+  persistedStateRef.current = {
+    currentTime: currentTime.toISOString(),
+    live: timelineLive,
+    playing: timelinePlaying,
+    playbackSpeed,
+    showSunMoon
+  };
+
+  useEffect(() => {
+    return () => {
+      try {
+        sessionStorage.setItem(TRACKER_STATE_KEY, JSON.stringify(persistedStateRef.current));
+      } catch {
+        // Ignore storage failures in restricted environments.
+      }
+    };
+  }, []);
   const trackTimeKey = Math.floor(currentTime.getTime() / 30000);
   const trackStart = useMemo(
     () => new Date(trackTimeKey * 30000 - (TRACK_WINDOW_MINUTES / 2) * 60000),
@@ -127,14 +178,13 @@ export function TrackerPage() {
         satellite.id,
         buildGroundTrack(
           satellite,
-          observer,
           trackStart,
           TRACK_WINDOW_MINUTES + 1,
           TRACK_STEP_SECONDS
         )
       ])
     );
-  }, [observer, trackStart, visibleSatellites]);
+  }, [trackStart, visibleSatellites]);
 
   useEffect(() => {
     const previous = previousPlaybackTickRef.current;
@@ -181,6 +231,9 @@ export function TrackerPage() {
           latitudeDeg: snapshot.latitudeDeg,
           longitudeDeg: snapshot.longitudeDeg,
           altitudeKm: snapshot.altitudeKm,
+          azimuthDeg: snapshot.azimuthDeg,
+          elevationDeg: snapshot.elevationDeg,
+          rangeKm: snapshot.rangeKm,
           groundTrack: groundTracksById.get(satellite.id) ?? [],
           selected: satellite.id === selectedSatelliteId,
           color: getSatelliteColor(satellite.id, visibleSatelliteIds)
@@ -189,10 +242,7 @@ export function TrackerPage() {
     [currentTime, getSatelliteColor, groundTracksById, observer, selectedSatelliteId, visibleSatelliteIds, visibleSatellites]
   );
 
-  const focusSatellite =
-    selectedSatellite && visibleSatellites.some((satellite) => satellite.id === selectedSatellite.id)
-      ? selectedSatellite
-      : visibleSatellites[0];
+  const focusSatellite = selectedSatellite ?? visibleSatellites[0];
   const selectedTrackedSatellite = trackedSatellites.find((satellite) => satellite.id === focusSatellite?.id);
   const selectedSnapshot = useMemo(() => {
     if (!focusSatellite) {
@@ -201,6 +251,20 @@ export function TrackerPage() {
 
     return computeOrbitSnapshot(focusSatellite, currentTime, observer);
   }, [currentTime, focusSatellite, observer]);
+  const passWindowKey = Math.floor(currentTime.getTime() / 60000);
+  const upcomingPasses = useMemo(() => {
+    if (!focusSatellite) {
+      return [];
+    }
+
+    const passStart = new Date(passWindowKey * 60000);
+    return predictPassesForSatellite(focusSatellite, observer, {
+      start: passStart,
+      end: new Date(passStart.getTime() + 3 * 86400000),
+      minElevationDeg: observer.minElevationDeg,
+      stepSeconds: 45
+    }).slice(0, 4);
+  }, [focusSatellite, observer, passWindowKey]);
 
   function goLive() {
     timelineAnchorRef.current = Date.now();
@@ -260,9 +324,7 @@ export function TrackerPage() {
       pointerId: event.pointerId,
       startX: event.clientX,
       startOffset: nextValue,
-      minutesPerPixel:
-        (INITIAL_TIMELINE_MAX_MINUTES - INITIAL_TIMELINE_MIN_MINUTES) /
-        Math.max(bounds.width, 1)
+      minutesPerPixel: span / Math.max(bounds.width, 1)
     };
     setTimelineOffset(nextValue);
   }
@@ -309,6 +371,13 @@ export function TrackerPage() {
     }
   }
 
+  function inspectSatellite(id: string) {
+    selectSatellite(id);
+    requestAnimationFrame(() => {
+      dataPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   if (!focusSatellite || !selectedSnapshot || trackedSatellites.length === 0) {
     return (
       <div className="panel p-8">
@@ -319,12 +388,13 @@ export function TrackerPage() {
   }
 
   async function untrackSatellite(id: string) {
+    let nextWatchlistIds = watchlistIds;
     if (watchlistIds.includes(id)) {
-      await toggleWatchlist(id);
+      nextWatchlistIds = await toggleWatchlist(id);
     }
 
     if (id === selectedSatelliteId) {
-      selectSatellite(watchlistIds.find((watchlistId) => watchlistId !== id) ?? null);
+      selectSatellite(nextWatchlistIds[0] ?? null);
     }
   }
 
@@ -342,9 +412,9 @@ export function TrackerPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="label">Live tracker</p>
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">{focusSatellite.name}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">Orbital view</h1>
           <p className="mono mt-1.5 text-sm text-[var(--muted)]">
-            NORAD ID {focusSatellite.noradId} · showing {trackedSatellites.length} satellite
+            Showing {trackedSatellites.length} satellite
             {trackedSatellites.length === 1 ? "" : "s"}
           </p>
         </div>
@@ -362,7 +432,17 @@ export function TrackerPage() {
         {trackedSatellites.map((satellite) => (
           <div
             key={satellite.id}
-            className="flex items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]"
+            className="flex cursor-pointer items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]"
+            role="button"
+            tabIndex={0}
+            title="Inspect this satellite"
+            onClick={() => inspectSatellite(satellite.id)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                inspectSatellite(satellite.id);
+              }
+            }}
           >
             <input
               className="satellite-color-picker"
@@ -484,20 +564,84 @@ export function TrackerPage() {
         </CardContent>
       </Card>
 
-      <div className={trackerViewMode === "2d" ? "block" : "hidden"}>
+      {trackerViewMode === "2d" ? (
         <Map2D
           observer={{ latitude: observer.latitude, longitude: observer.longitude }}
           satellites={trackedSatellites}
           currentTime={currentTime}
           showSunMoon={showSunMoon}
+          onSatelliteDoubleClick={inspectSatellite}
         />
-      </div>
-      <div className={trackerViewMode === "3d" ? "block" : "hidden"}>
+      ) : (
         <Globe3D
           observer={observer}
           satellites={trackedSatellites}
           currentTime={currentTime}
           showSunMoon={showSunMoon}
+          onSatelliteDoubleClick={inspectSatellite}
+        />
+      )}
+
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <section ref={dataPanelRef} className="panel scroll-mt-16 p-5 md:scroll-mt-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="label">Selected satellite</p>
+              <h2 className="mt-1 text-xl font-semibold tracking-tight text-[var(--text)]">{focusSatellite.name}</h2>
+              <p className="mono mt-1.5 text-sm text-[var(--muted)]">
+                NORAD ID {focusSatellite.noradId}
+                {focusSatellite.internationalDesignator ? ` · ${focusSatellite.internationalDesignator}` : ""}
+              </p>
+            </div>
+            <Button variant="secondary" size="sm" onClick={() => void refreshSelectedSatellite()}>
+              Refresh TLE
+            </Button>
+          </div>
+
+          <div className="mt-5">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-[var(--text)]">Upcoming passes</h3>
+              <span className="mono text-xs text-[var(--muted)]">Next 3 days</span>
+            </div>
+            <div className="mt-3 overflow-auto">
+              <table>
+                <thead>
+                  <tr>
+                    <th>AOS</th>
+                    <th>Max El</th>
+                    <th>Duration</th>
+                    <th>Azimuth</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {upcomingPasses.map((pass) => (
+                    <tr key={`${pass.satelliteId}-${pass.aos}`}>
+                      <td className="mono">{formatTimestamp(pass.aos)}</td>
+                      <td>{pass.maxElevationDeg.toFixed(1)}°</td>
+                      <td>{formatDuration(pass.durationSec)}</td>
+                      <td className="mono">
+                        {pass.aosAzimuthDeg.toFixed(0)}°{" -> "}{pass.losAzimuthDeg.toFixed(0)}°
+                      </td>
+                    </tr>
+                  ))}
+                  {upcomingPasses.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="py-5 text-center text-sm text-[var(--muted)]">
+                        No passes above the current horizon mask.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <RadarScope
+          satellites={trackedSatellites}
+          selectedSatelliteId={focusSatellite.id}
+          minElevationDeg={observer.minElevationDeg}
+          onSatelliteDoubleClick={inspectSatellite}
         />
       </div>
 

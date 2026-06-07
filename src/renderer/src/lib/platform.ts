@@ -13,7 +13,7 @@ export async function saveTextFile(content: string, defaultName: string) {
   anchor.href = url;
   anchor.download = defaultName;
   anchor.click();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
   return true;
 }
 

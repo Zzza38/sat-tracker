@@ -1,12 +1,12 @@
 # Sat Tracker
 
-All-in-one satellite tracking app built with TypeScript, React, satellite.js, MapLibre, and Cesium. It runs in the browser and as an Electron desktop app from the same codebase.
+All-in-one satellite tracking app built with TypeScript, React, satellite.js, and Cesium. It runs in the browser and as an Electron desktop app from the same codebase.
 
 ## Features
 
 - Manual TLE, 3LE, and OMM JSON ingestion
 - CelesTrak auto-fetch by NORAD ID or curated groups
-- Live propagation with look angles, Doppler, sun/shadow state, and ground tracks
+- Live propagation with look angles, sun/shadow state, and ground tracks
 - Pass prediction with AOS, LOS, TCA, azimuth arcs, sky plot, and elevation chart
 - 2D map tracker with optional lazy-loaded 3D Cesium globe
 - IndexedDB persistence for satellites, observer sites, watchlists, and settings
@@ -15,13 +15,15 @@ All-in-one satellite tracking app built with TypeScript, React, satellite.js, Ma
 ## Scripts
 
 ```bash
-npm run dev          # Electron dev app
-npm run dev:web      # Web-only dev server
-npm run build        # Electron + web production builds
-npm run build:web    # Static web build in dist-web/
-npm run build:electron
-npm run test
-npm run lint
+pnpm dev             # Electron dev app
+pnpm dev:web         # Web-only dev server
+pnpm build           # Electron + web production builds
+pnpm build:web       # Static web build in dist-web/
+pnpm build:electron
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm test:watch
 ```
 
 ## Web deploy
@@ -29,7 +31,7 @@ npm run lint
 Build the static site:
 
 ```bash
-npm run build:web
+pnpm build:web
 ```
 
 Serve `dist-web/` behind Caddy, nginx, or any static file host. The build copies Cesium assets into `dist-web/cesium/`.
@@ -49,10 +51,10 @@ sat.example.com {
 Production Electron builds output to `out/`:
 
 - `out/main/index.js`
-- `out/preload/index.js`
+- `out/preload/index.mjs`
 - `out/renderer/index.html`
 
-Run a packaged build with your preferred Electron packaging tool after `npm run build:electron`.
+The repository builds unpackaged Electron output only; it does not include electron-builder or Electron Forge packaging configuration.
 
 ## Observer workflow
 
@@ -60,10 +62,10 @@ Run a packaged build with your preferred Electron packaging tool after `npm run 
 2. Add satellites in **Catalog** by NORAD ID, manual TLE paste, or CelesTrak group import.
 3. Use **Passes** to compute upcoming visible passes for your watchlist.
 4. Open **Tracker** for live position and ground track visualization.
-5. Use **Details** for orbital elements, TLE age, Doppler, and next passes.
+5. Use **Details** for orbital elements, current look angles, and next passes.
 
 ## Notes
 
 - CelesTrak GP data is fetched directly from `celestrak.org`.
 - OMM JSON is stored internally so the app can handle larger catalog numbers as TLE-only sources age out.
-- SGP4 accuracy depends on TLE freshness; stale elements are flagged in the UI.
+- SGP4 accuracy depends on TLE freshness; configure the automatic refresh interval in Settings.

@@ -4,13 +4,14 @@
   "description": "All-in-one satellite tracker for the web and Electron.",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/copy-cesium.mjs public/cesium && electron-vite dev",
     "dev:web": "node scripts/copy-cesium.mjs public/cesium && vite --config vite.web.config.ts",
-    "build": "npm run build:electron && npm run build:web",
+    "build": "pnpm run build:electron && pnpm run build:web",
     "build:web": "vite build --config vite.web.config.ts && node scripts/copy-cesium.mjs dist-web/cesium",
     "build:electron": "electron-vite build && node scripts/copy-cesium.mjs out/renderer/cesium",
     "preview": "vite preview --config vite.web.config.ts",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts"
   },
@@ -18,14 +19,13 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "packageManager": "pnpm@11.1.2",
   "dependencies": {
     "cesium": "^1.141.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dexie": "^4.4.3",
     "lucide-react": "^1.17.0",
-    "maplibre-gl": "^5.24.0",
-    "motion": "^12.40.0",
     "radix-ui": "^1.4.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
@@ -48,7 +48,6 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.60.0",
     "vite": "^7.3.3",
-    "vite-plugin-static-copy": "^4.1.0",
     "vitest": "^4.1.7"
   }
 }

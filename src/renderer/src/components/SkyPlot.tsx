@@ -21,7 +21,7 @@ export function SkyPlot({
 
   const project = (azimuthDeg: number, elevationDeg: number) => {
     const azimuth = ((azimuthDeg - 90) * Math.PI) / 180;
-    const distance = ((90 - elevationDeg) / 90) * radius;
+    const distance = ((90 - Math.min(90, Math.max(0, elevationDeg))) / 90) * radius;
     return {
       x: center + Math.cos(azimuth) * distance,
       y: center + Math.sin(azimuth) * distance
@@ -35,7 +35,7 @@ export function SkyPlot({
   }));
 
   return (
-    <svg viewBox={`0 0 ${size} ${size}`} className="h-[320px] w-full">
+    <svg viewBox={`0 0 ${size} ${size}`} className="h-[320px] w-full" role="img" aria-label="Pass sky plot">
       <rect width={size} height={size} rx="10" fill="#0c0d10" stroke="rgba(255,255,255,0.07)" />
       {[0, 30, 60, 90].map((ring) => (
         <circle

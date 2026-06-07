@@ -30,7 +30,6 @@ const DEFAULT_SETTINGS: SettingsRow = {
   id: "app",
   refreshIntervalValue: 12,
   refreshIntervalUnit: "hours",
-  colorScheme: "dark",
   tleSources: DEFAULT_TLE_SOURCES,
   defaultTleSourceId: "stations",
   trackOnAdd: false,
@@ -93,31 +92,46 @@ export class SatTrackerDb extends Dexie {
 }
 
 export const db = new SatTrackerDb();
+let seedDataPromise: Promise<void> | null = null;
 
 export async function ensureSeedData() {
-  const observerCount = await db.observers.count();
-  if (observerCount === 0) {
-    await db.observers.put(DEFAULT_OBSERVER);
-  }
+  if (!seedDataPromise) {
+    seedDataPromise = db.transaction(
+      "rw",
+      db.observers,
+      db.settings,
+      db.watchlists,
+      async () => {
+        const observerCount = await db.observers.count();
+        if (observerCount === 0) {
+          await db.observers.put(DEFAULT_OBSERVER);
+        }
 
-  const settings = await db.settings.get("app");
-  if (!settings) {
-    await db.settings.put(DEFAULT_SETTINGS);
-  } else {
-    const migrated = migrateSettings(settings);
-    if (JSON.stringify(migrated) !== JSON.stringify(settings)) {
-      await db.settings.put(migrated);
-    }
-  }
+        const settings = await db.settings.get("app");
+        if (!settings) {
+          await db.settings.put(DEFAULT_SETTINGS);
+        } else {
+          const migrated = migrateSettings(settings);
+          if (JSON.stringify(migrated) !== JSON.stringify(settings)) {
+            await db.settings.put(migrated);
+          }
+        }
 
-  const watchlistCount = await db.watchlists.count();
-  if (watchlistCount === 0) {
-    await db.watchlists.put({
-      id: "default",
-      name: "Watchlist",
-      satelliteIds: []
+        const watchlistCount = await db.watchlists.count();
+        if (watchlistCount === 0) {
+          await db.watchlists.put({
+            id: "default",
+            name: "Watchlist",
+            satelliteIds: []
+          });
+        }
+      }
+    ).finally(() => {
+      seedDataPromise = null;
     });
   }
+
+  await seedDataPromise;
 }
 
 export async function getSettings() {
@@ -127,12 +141,23 @@ export async function getSettings() {
 }
 
 export async function saveSettings(settings: Partial<SettingsRow>) {
-  const current = await getSettings();
-  await db.settings.put({ ...current, ...settings });
+  await ensureSeedData();
+  const updated = await db.settings.update("app", settings);
+  if (updated === 0) {
+    await db.settings.put({ ...DEFAULT_SETTINGS, ...settings });
+  }
 }
 
 export async function getActiveObserver() {
   const settings = await getSettings();
   const observer = await db.observers.get(settings.activeObserverId);
-  return observer ?? DEFAULT_OBSERVER;
+  if (observer) {
+    return observer;
+  }
+
+  await db.observers.put(DEFAULT_OBSERVER);
+  if (settings.activeObserverId !== DEFAULT_OBSERVER.id) {
+    await saveSettings({ activeObserverId: DEFAULT_OBSERVER.id });
+  }
+  return DEFAULT_OBSERVER;
 }

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getMoonSubpoint, getSunSubpoint } from "@/shared/astro/lighting";
 import { GroundTrackPoint } from "@/shared/types";
 import { Button } from "./ui/button";
@@ -11,6 +11,9 @@ export interface TrackedSatelliteView {
   latitudeDeg: number;
   longitudeDeg: number;
   altitudeKm: number;
+  azimuthDeg: number;
+  elevationDeg: number;
+  rangeKm: number;
   groundTrack: GroundTrackPoint[];
   selected: boolean;
   color: string;
@@ -21,6 +24,7 @@ interface Map2DProps {
   satellites: TrackedSatelliteView[];
   currentTime: Date;
   showSunMoon: boolean;
+  onSatelliteDoubleClick?: (satelliteId: string) => void;
 }
 
 interface ProjectedPoint {
@@ -176,7 +180,13 @@ function worldCopyRange(panX: number, zoom: number) {
   return Array.from({ length: end - start + 1 }, (_, index) => start + index);
 }
 
-export function Map2D({ observer, satellites, currentTime, showSunMoon }: Map2DProps) {
+export function Map2D({
+  observer,
+  satellites,
+  currentTime,
+  showSunMoon,
+  onSatelliteDoubleClick
+}: Map2DProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null);
   const [viewport, setViewport] = useState({ panX: 0, panY: 0, zoom: 1 });
@@ -230,10 +240,25 @@ export function Map2D({ observer, satellites, currentTime, showSunMoon }: Map2DP
     });
   }
 
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) {
+      return;
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const anchor = toViewBoxPoint(event.clientX, event.clientY);
+      zoomBy(event.deltaY < 0 ? 1.18 : 1 / 1.18, anchor);
+    };
+    svg.addEventListener("wheel", handleWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", handleWheel);
+  }, []);
+
   const markerScale = 1 / viewport.zoom;
 
   return (
-    <section className="relative h-[520px] w-full select-none overflow-hidden rounded-[10px] border border-[var(--line)] bg-[#0b0f14]">
+    <section className="relative h-[380px] w-full select-none overflow-hidden rounded-[10px] border border-[var(--line)] bg-[#0b0f14] sm:h-[460px] lg:h-[520px]">
       <svg
         ref={svgRef}
         viewBox={`0 0 ${WORLD_WIDTH} ${WORLD_HEIGHT}`}
@@ -241,6 +266,9 @@ export function Map2D({ observer, satellites, currentTime, showSunMoon }: Map2DP
         role="img"
         aria-label="World map with satellite ground track"
         onPointerDown={(event) => {
+          if ((event.target as Element).closest("[data-satellite-marker]")) {
+            return;
+          }
           event.preventDefault();
           event.currentTarget.setPointerCapture(event.pointerId);
           dragRef.current = {
@@ -273,11 +301,6 @@ export function Map2D({ observer, satellites, currentTime, showSunMoon }: Map2DP
         }}
         onPointerCancel={() => {
           dragRef.current = null;
-        }}
-        onWheel={(event) => {
-          event.preventDefault();
-          const anchor = toViewBoxPoint(event.clientX, event.clientY);
-          zoomBy(event.deltaY < 0 ? 1.18 : 1 / 1.18, anchor);
         }}
       >
         <defs>
@@ -383,7 +406,25 @@ export function Map2D({ observer, satellites, currentTime, showSunMoon }: Map2DP
                 </g>
 
                 {satelliteViews.map((satellite) => (
-                  <g key={`${copy}-${satellite.id}`} transform={`translate(${satellite.point.x} ${satellite.point.y}) scale(${markerScale})`}>
+                  <g
+                    key={`${copy}-${satellite.id}`}
+                    className="cursor-pointer"
+                    data-satellite-marker
+                    role="button"
+                    aria-label={`Inspect ${satellite.name}`}
+                    transform={`translate(${satellite.point.x} ${satellite.point.y}) scale(${markerScale})`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onSatelliteDoubleClick?.(satellite.id);
+                    }}
+                    onDoubleClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onSatelliteDoubleClick?.(satellite.id);
+                    }}
+                  >
+                    <title>{`Double-click to inspect ${satellite.name}`}</title>
                     <circle r={satellite.selected ? "10" : "7"} fill={satellite.color} filter="url(#markerGlow)" />
                     <circle r={satellite.selected ? "16" : "12"} fill="none" stroke={satellite.color} strokeOpacity="0.68" strokeWidth="2.5" />
                     <text x="16" y="-12" fill="#eef2f0" fontSize="16" fontWeight="700">
@@ -419,6 +460,7 @@ export function Map2D({ observer, satellites, currentTime, showSunMoon }: Map2DP
             {satellite.name}
           </span>
         ))}
+        {satellites.length > 3 ? <span>+{satellites.length - 3} more</span> : null}
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-[#e0a458]" />
           Observer
