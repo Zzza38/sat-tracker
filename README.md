@@ -26,6 +26,34 @@ npm run test
 npm run test:watch
 ```
 
+## Desktop builds
+
+Build both Windows desktop artifacts:
+
+```bash
+npm run dist
+```
+
+The generated files are written to `release/`:
+
+- `Sat Tracker Setup 1.0.0.exe` installer
+- `Sat Tracker 1.0.0.exe` portable executable
+
+You can also build them separately:
+
+```bash
+npm run dist:installer
+npm run dist:portable
+npm run dist:mac
+npm run dist:linux
+```
+
+CI builds desktop artifacts on Windows, macOS, and Linux. Open the latest `CI` workflow run and download the platform artifact you need:
+
+- `sat-tracker-windows`
+- `sat-tracker-macos`
+- `sat-tracker-linux`
+
 ## Web deploy
 
 Build the static site:
@@ -54,7 +82,7 @@ Production Electron builds output to `out/`:
 - `out/preload/index.mjs`
 - `out/renderer/index.html`
 
-The repository builds unpackaged Electron output only; it does not include electron-builder or Electron Forge packaging configuration.
+Packaged desktop builds output platform artifacts to `release/`.
 
 ## Observer workflow
 

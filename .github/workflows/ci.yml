@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
   pull_request:
 
@@ -17,3 +18,45 @@ jobs:
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
+
+  package-desktop:
+    name: package-${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            command: npm run dist:win
+            artifact: sat-tracker-windows
+            files: |
+              release/*.exe
+          - platform: macos
+            os: macos-latest
+            command: npm run dist:mac
+            artifact: sat-tracker-macos
+            files: |
+              release/*.dmg
+              release/*.zip
+          - platform: linux
+            os: ubuntu-latest
+            command: npm run dist:linux
+            artifact: sat-tracker-linux
+            files: |
+              release/*.AppImage
+              release/*.deb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+      - run: ${{ matrix.command }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 14

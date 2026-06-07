@@ -2,6 +2,7 @@ node_modules
 out
 dist-web
 dist-electron
+release
 *.log
 .DS_Store
 public/cesium
