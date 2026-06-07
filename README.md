@@ -15,15 +15,15 @@ All-in-one satellite tracking app built with TypeScript, React, satellite.js, an
 ## Scripts
 
 ```bash
-pnpm dev             # Electron dev app
-pnpm dev:web         # Web-only dev server
-pnpm build           # Electron + web production builds
-pnpm build:web       # Static web build in dist-web/
-pnpm build:electron
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm test:watch
+npm run dev             # Electron dev app
+npm run dev:web         # Web-only dev server
+npm run build           # Electron + web production builds
+npm run build:web       # Static web build in dist-web/
+npm run build:electron
+npm run lint
+npm run typecheck
+npm run test
+npm run test:watch
 ```
 
 ## Web deploy
@@ -31,7 +31,7 @@ pnpm test:watch
 Build the static site:
 
 ```bash
-pnpm build:web
+npm run build:web
 ```
 
 Serve `dist-web/` behind Caddy, nginx, or any static file host. The build copies Cesium assets into `dist-web/cesium/`.

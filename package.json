@@ -1,12 +1,12 @@
 {
   "name": "sat-tracker",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "All-in-one satellite tracker for the web and Electron.",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "node scripts/copy-cesium.mjs public/cesium && electron-vite dev",
     "dev:web": "node scripts/copy-cesium.mjs public/cesium && vite --config vite.web.config.ts",
-    "build": "pnpm run build:electron && pnpm run build:web",
+    "build": "npm run build:electron && npm run build:web",
     "build:web": "vite build --config vite.web.config.ts && node scripts/copy-cesium.mjs dist-web/cesium",
     "build:electron": "electron-vite build && node scripts/copy-cesium.mjs out/renderer/cesium",
     "preview": "vite preview --config vite.web.config.ts",
@@ -19,7 +19,6 @@
   "author": "",
   "license": "ISC",
   "type": "module",
-  "packageManager": "pnpm@11.1.2",
   "dependencies": {
     "cesium": "^1.141.0",
     "class-variance-authority": "^0.7.1",
