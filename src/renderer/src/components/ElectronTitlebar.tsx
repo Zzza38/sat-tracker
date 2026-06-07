@@ -11,6 +11,8 @@ const pageLabels = {
   settings: "Settings"
 } as const;
 
+const APP_ICON_ASSET_URL = `${import.meta.env.BASE_URL}sat-tracker-icon.svg`;
+
 export function ElectronTitlebar() {
   const { page, satellites, watchlistIds, selectedSatelliteId, selectSatellite } = useApp();
   const [satelliteMenuOpen, setSatelliteMenuOpen] = useState(false);
@@ -55,7 +57,7 @@ export function ElectronTitlebar() {
   return (
     <div className="electron-titlebar">
       <div className="electron-titlebar-brand">
-        <img className="electron-titlebar-icon" src="/sat-tracker-icon.svg" alt="" />
+        <img className="electron-titlebar-icon" src={APP_ICON_ASSET_URL} alt="" />
         <span className="electron-titlebar-name">Sat Tracker</span>
       </div>
 

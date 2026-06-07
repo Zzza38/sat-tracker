@@ -37,7 +37,7 @@
       "package.json"
     ],
     "win": {
-      "icon": "public/sat-tracker-icon.ico",
+      "icon": "build/icon.ico",
       "target": [
         "nsis",
         "portable"
@@ -48,6 +48,7 @@
       "allowToChangeInstallationDirectory": true
     },
     "mac": {
+      "icon": "build/icon.png",
       "target": [
         "dmg",
         "zip"
@@ -61,7 +62,6 @@
       ],
       "category": "Science",
       "maintainer": "Zion <zion@ziona.dev>",
-      "desktopName": "sat-tracker",
       "syncDesktopName": true,
       "icon": "build/icons"
     }
