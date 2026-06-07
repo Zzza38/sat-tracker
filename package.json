@@ -22,9 +22,10 @@
     "test:watch": "vitest --config vitest.config.ts"
   },
   "keywords": [],
-  "author": "",
+  "author": "Zion <zion@ziona.dev>",
   "license": "ISC",
   "type": "module",
+  "desktopName": "sat-tracker",
   "build": {
     "appId": "com.sattracker.app",
     "productName": "Sat Tracker",
@@ -58,7 +59,11 @@
         "AppImage",
         "deb"
       ],
-      "category": "Science"
+      "category": "Science",
+      "maintainer": "Zion <zion@ziona.dev>",
+      "desktopName": "sat-tracker",
+      "syncDesktopName": true,
+      "icon": "build/icons"
     }
   },
   "dependencies": {
