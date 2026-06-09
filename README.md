@@ -1,6 +1,10 @@
+<img src="public/sat-tracker-icon.svg" height="100px">
+
 # Sat Tracker
 
 All-in-one satellite tracking app built with TypeScript, React, satellite.js, and Cesium. It runs in the browser and as an Electron desktop app from the same codebase.
+
+Test it out [here](https://sat-tracker-zeta.vercel.app)!
 
 ## Features
 
