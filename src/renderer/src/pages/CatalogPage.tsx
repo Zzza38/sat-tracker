@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { searchSatellites, sortSatellites } from "@/shared/catalog/search";
+import { formatFetchTooltip, formatRelativeAge } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
 import { Button } from "../components/ui/button";
+import { TleFreshnessBadge } from "../components/TleFreshnessBadge";
 
 export function CatalogPage() {
   const {
@@ -182,13 +184,15 @@ export function CatalogPage() {
             <tr>
               <th>Name</th>
               <th>NORAD ID</th>
+              <th>Data age</th>
+              <th>Fetched</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={3} className="py-8 text-center text-sm text-[var(--muted)]">
+                <td colSpan={5} className="py-8 text-center text-sm text-[var(--muted)]">
                   No satellites yet. Add one above or import a group from Settings.
                 </td>
               </tr>
@@ -199,6 +203,12 @@ export function CatalogPage() {
                   <tr key={record.id} className={tracked ? "bg-[var(--surface-2)]" : undefined}>
                     <td>{record.name}</td>
                     <td className="mono">{record.noradId}</td>
+                    <td>
+                      <TleFreshnessBadge satellite={record} />
+                    </td>
+                    <td className="mono text-xs text-[var(--muted)]" title={formatFetchTooltip(record.fetchedAt)}>
+                      {formatRelativeAge(record.fetchedAt)}
+                    </td>
                     <td>
                       <div className="flex justify-end gap-2">
                         <Button

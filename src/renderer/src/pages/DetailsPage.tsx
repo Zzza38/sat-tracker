@@ -1,10 +1,11 @@
 import { predictPassesForSatellite } from "@/shared/passes/predictor-core";
 import { useMemo } from "react";
 import { computeOrbitSnapshot, getOrbitMetrics } from "@/shared/propagation/engine";
-import { formatTimestamp } from "@/shared/utils/date";
+import { epochAgeDays, formatRelativeAge, formatTimestamp } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
 import { useTicker } from "../hooks/useTicker";
 import { Button } from "../components/ui/button";
+import { TleFreshnessBadge } from "../components/TleFreshnessBadge";
 
 export function DetailsPage() {
   const {
@@ -40,6 +41,7 @@ export function DetailsPage() {
       end: new Date(Date.now() + 3 * 86400000)
     }).slice(0, 5);
   }, [observer, selectedSatellite]);
+  const epochAge = selectedSatellite ? epochAgeDays(selectedSatellite.epoch, now) : undefined;
 
   if (!selectedSatellite || !snapshot || !metrics) {
     return (
@@ -61,6 +63,14 @@ export function DetailsPage() {
               NORAD ID {selectedSatellite.noradId}
               {selectedSatellite.internationalDesignator ? ` · ${selectedSatellite.internationalDesignator}` : ""}
             </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+              <TleFreshnessBadge satellite={selectedSatellite} />
+              <span className="mono">
+                Epoch {epochAge === undefined ? "unknown" : `${Math.max(0, epochAge).toFixed(1)}d old`}
+              </span>
+              <span className="text-[var(--faint)]">·</span>
+              <span className="mono">Fetched {formatRelativeAge(selectedSatellite.fetchedAt, now)}</span>
+            </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button onClick={() => void refreshSelectedSatellite()}>Refresh TLE</Button>

@@ -12,10 +12,16 @@ interface Globe3DProps {
 }
 
 const EARTH_RADIUS_M = 6371000;
-const FOOTPRINT_HEIGHT_M = 12000;
-const FOOTPRINT_SEGMENTS = 72;
+const FOOTPRINT_SURFACE_HEIGHT_M = 12000;
+const FOOTPRINT_SEGMENTS = 48;
 const MAX_FOOTPRINTS_WITH_ALL_TRACKED = 30;
 const billboardCache = new Map<string, string>();
+
+interface FootprintGeometry {
+  key: string;
+  hierarchy: any;
+  outlinePositions: any[];
+}
 
 function footprintRadiusMeters(altitudeKm: number) {
   return Math.acos(EARTH_RADIUS_M / (EARTH_RADIUS_M + Math.max(altitudeKm, 1) * 1000)) * EARTH_RADIUS_M;
@@ -43,7 +49,7 @@ function footprintDegrees(latitudeDeg: number, longitudeDeg: number, radiusMeter
       );
     const normalizedLongitude = ((((longitude * 180) / Math.PI + 540) % 360) - 180);
 
-    points.push(normalizedLongitude, (latitude * 180) / Math.PI, FOOTPRINT_HEIGHT_M);
+    points.push(normalizedLongitude, (latitude * 180) / Math.PI);
   }
 
   return points;
@@ -52,7 +58,37 @@ function footprintDegrees(latitudeDeg: number, longitudeDeg: number, radiusMeter
 function footprintPositions(Cesium: any, satellite: TrackedSatelliteView) {
   const footprintRadius = footprintRadiusMeters(satellite.altitudeKm);
   const footprintPoints = footprintDegrees(satellite.latitudeDeg, satellite.longitudeDeg, footprintRadius);
-  return Cesium.Cartesian3.fromDegreesArrayHeights(footprintPoints);
+  return Cesium.Cartesian3.fromDegreesArray(footprintPoints);
+}
+
+function footprintGeometryKey(satellite: TrackedSatelliteView) {
+  return [
+    satellite.latitudeDeg.toFixed(2),
+    satellite.longitudeDeg.toFixed(2),
+    satellite.altitudeKm.toFixed(0)
+  ].join(":");
+}
+
+function getFootprintGeometry(
+  Cesium: any,
+  satellite: TrackedSatelliteView,
+  cache: Map<string, FootprintGeometry>
+) {
+  const key = footprintGeometryKey(satellite);
+  const cached = cache.get(satellite.id);
+  if (cached?.key === key) {
+    return cached;
+  }
+
+  const positions = footprintPositions(Cesium, satellite);
+  const outlinePositions = [...positions, positions[0]];
+  const geometry = {
+    key,
+    hierarchy: new Cesium.PolygonHierarchy(positions),
+    outlinePositions
+  };
+  cache.set(satellite.id, geometry);
+  return geometry;
 }
 
 function trackRevision(satellite: TrackedSatelliteView) {
@@ -77,14 +113,23 @@ function entityStructureKey(satellites: TrackedSatelliteView[]) {
     .join("|");
 }
 
+function footprintUpdateKey(satellites: TrackedSatelliteView[]) {
+  return satellites
+    .map((satellite) => `${satellite.id}:${footprintGeometryKey(satellite)}`)
+    .join("|");
+}
+
 function satelliteIdFromEntityId(entityId: string) {
-  for (const suffix of ["-satellite", "-footprint", "-ground-track", "-orbit-track"]) {
-    if (entityId.endsWith(suffix)) {
-      return entityId.slice(0, -suffix.length);
-    }
+  const suffix = "-satellite";
+  if (entityId.endsWith(suffix)) {
+    return entityId.slice(0, -suffix.length);
   }
 
   return null;
+}
+
+function isSatelliteOverlayEntity(entityId: string) {
+  return ["-footprint", "-ground-track", "-orbit-track"].some((suffix) => entityId.endsWith(suffix));
 }
 
 function satelliteBillboard(color: string) {
@@ -137,6 +182,65 @@ function setEntityPosition(entity: any, position: any) {
   entity.position = position;
 }
 
+function setSatelliteCameraPivot(Cesium: any, viewer: any, satellite: TrackedSatelliteView) {
+  const transform = Cesium.Transforms.eastNorthUpToFixedFrame(
+    Cesium.Cartesian3.fromDegrees(
+      satellite.longitudeDeg,
+      satellite.latitudeDeg,
+      satellite.altitudeKm * 1000
+    )
+  );
+  const inverseTransform = Cesium.Matrix4.inverseTransformation(transform, new Cesium.Matrix4());
+  const localCameraPosition = Cesium.Matrix4.multiplyByPoint(
+    inverseTransform,
+    viewer.camera.positionWC,
+    new Cesium.Cartesian3()
+  );
+
+  viewer.camera.lookAtTransform(transform, localCameraPosition);
+}
+
+function flyToSatellite(Cesium: any, viewer: any, satellite: TrackedSatelliteView) {
+  const satelliteAltitudeM = Math.max(satellite.altitudeKm, 0) * 1000;
+  const cameraAltitudeM = Math.max(
+    14000000,
+    Math.min(70000000, satelliteAltitudeM + Math.max(satelliteAltitudeM * 0.35, 3500000))
+  );
+
+  viewer.trackedEntity = undefined;
+  viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(
+      satellite.longitudeDeg,
+      satellite.latitudeDeg,
+      cameraAltitudeM
+    ),
+    orientation: {
+      heading: 0,
+      pitch: Cesium.Math.toRadians(-90),
+      roll: 0
+    },
+    duration: 1.2,
+    complete: () => {
+      setSatelliteCameraPivot(Cesium, viewer, satellite);
+    }
+  });
+}
+
+function flyToEarth(Cesium: any, viewer: any) {
+  viewer.trackedEntity = undefined;
+  viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(0, 18, 26000000),
+    orientation: {
+      heading: 0,
+      pitch: Cesium.Math.toRadians(-90),
+      roll: 0
+    },
+    duration: 1.0
+  });
+}
+
 export function Globe3D({
   observer,
   satellites,
@@ -150,6 +254,7 @@ export function Globe3D({
   const cameraTargetIdRef = useRef<string | null>(null);
   const observerEntityRef = useRef<any>(null);
   const satelliteEntityIdsRef = useRef<Set<string>>(new Set());
+  const footprintGeometryRef = useRef<Map<string, FootprintGeometry>>(new Map());
   const footprintStyleRef = useRef<Map<string, string>>(new Map());
   const trackStyleRef = useRef<Map<string, string>>(new Map());
   const billboardStyleRef = useRef<Map<string, string>>(new Map());
@@ -171,6 +276,7 @@ export function Globe3D({
   onSatelliteDoubleClickRef.current = onSatelliteDoubleClick;
 
   const structureKey = entityStructureKey(satellites);
+  const footprintKey = footprintUpdateKey(satellites);
   const [viewerReady, setViewerReady] = useState(false);
 
   useEffect(() => {
@@ -280,6 +386,22 @@ export function Globe3D({
         const satelliteId = pickedId ? satelliteIdFromEntityId(pickedId) : null;
         if (satelliteId) {
           onSatelliteDoubleClickRef.current?.(satelliteId);
+          const tracked = satelliteByIdRef.current.get(satelliteId);
+          if (tracked) {
+            flyToSatellite(Cesium, viewer, tracked);
+            cameraTargetIdRef.current = satelliteId;
+          }
+          return;
+        }
+
+        if (pickedId && isSatelliteOverlayEntity(pickedId)) {
+          return;
+        }
+
+        const globePoint = viewer.camera.pickEllipsoid(movement.position, viewer.scene.globe.ellipsoid);
+        if (cameraTargetIdRef.current && globePoint) {
+          flyToEarth(Cesium, viewer);
+          cameraTargetIdRef.current = null;
         }
       }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
       doubleClickHandlerRef.current = doubleClickHandler;
@@ -318,6 +440,7 @@ export function Globe3D({
       cesiumRef.current = null;
       observerEntityRef.current = null;
       satelliteEntityIdsRef.current.clear();
+      footprintGeometryRef.current.clear();
       footprintStyleRef.current.clear();
       trackStyleRef.current.clear();
       billboardStyleRef.current.clear();
@@ -384,32 +507,21 @@ ${activeObserver.name}`;
         const footprintEntity = viewer.entities.getById(footprintId) ?? viewer.entities.add({ id: footprintId });
         const footprintStyleKey = `${satellite.color}-${satellite.selected}`;
         if (!footprintEntity.polygon || !footprintEntity.polyline || footprintStyleRef.current.get(footprintId) !== footprintStyleKey) {
+          const geometry = getFootprintGeometry(Cesium, satellite, footprintGeometryRef.current);
           footprintEntity.ellipse = undefined;
           footprintEntity.position = undefined;
           footprintEntity.polygon = {
-            hierarchy: new Cesium.CallbackProperty(() => {
-              const tracked = satelliteByIdRef.current.get(satelliteId);
-              if (!tracked) {
-                return new Cesium.PolygonHierarchy([]);
-              }
-
-              return new Cesium.PolygonHierarchy(footprintPositions(Cesium, tracked));
-            }, false),
+            hierarchy: geometry.hierarchy,
             material: satelliteColor.withAlpha(satellite.selected ? 0.2 : 0.12),
-            perPositionHeight: true
+            arcType: Cesium.ArcType.GEODESIC,
+            height: FOOTPRINT_SURFACE_HEIGHT_M,
+            perPositionHeight: false
           };
           footprintEntity.polyline = {
-            positions: new Cesium.CallbackProperty(() => {
-              const tracked = satelliteByIdRef.current.get(satelliteId);
-              if (!tracked) {
-                return [];
-              }
-
-              const positions = footprintPositions(Cesium, tracked);
-              return [...positions, positions[0]];
-            }, false),
+            positions: geometry.outlinePositions,
             width: satellite.selected ? 1.5 : 1,
             material: satelliteColor.withAlpha(satellite.selected ? 0.72 : 0.45),
+            arcType: Cesium.ArcType.GEODESIC,
             clampToGround: false
           };
           footprintStyleRef.current.set(footprintId, footprintStyleKey);
@@ -507,6 +619,7 @@ ${activeObserver.name}`;
       if (!nextEntityIds.has(entityId)) {
         viewer.entities.removeById(entityId);
         footprintStyleRef.current.delete(entityId);
+        footprintGeometryRef.current.delete(satelliteIdFromEntityId(entityId) ?? entityId);
         trackStyleRef.current.delete(entityId);
         billboardStyleRef.current.delete(entityId);
       }
@@ -516,22 +629,29 @@ ${activeObserver.name}`;
     const cameraTarget =
       satellitesRef.current.find((satellite) => satellite.selected) ?? satellitesRef.current[0];
     if (cameraTarget && cameraTargetIdRef.current !== cameraTarget.id) {
-      viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(
-          cameraTarget.longitudeDeg,
-          cameraTarget.latitudeDeg,
-          14000000
-        ),
-        orientation: {
-          heading: 0,
-          pitch: Cesium.Math.toRadians(-90),
-          roll: 0
-        },
-        duration: 1.2
-      });
+      flyToSatellite(Cesium, viewer, cameraTarget);
       cameraTargetIdRef.current = cameraTarget.id;
     }
   }, [structureKey, viewerReady]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const Cesium = cesiumRef.current;
+    if (!viewer || !Cesium || !viewerReady) {
+      return;
+    }
+
+    for (const satellite of satellitesRef.current) {
+      const footprintEntity = viewer.entities.getById(`${satellite.id}-footprint`);
+      if (!footprintEntity?.polygon || !footprintEntity.polyline) {
+        continue;
+      }
+
+      const geometry = getFootprintGeometry(Cesium, satellite, footprintGeometryRef.current);
+      footprintEntity.polygon.hierarchy = geometry.hierarchy;
+      footprintEntity.polyline.positions = geometry.outlinePositions;
+    }
+  }, [footprintKey, viewerReady]);
 
   return (
     <div

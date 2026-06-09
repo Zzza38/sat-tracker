@@ -416,9 +416,6 @@ export function TrackerPage() {
 
   function inspectSatellite(id: string) {
     selectSatellite(id);
-    requestAnimationFrame(() => {
-      dataPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
   }
 
   if (!focusSatellite || !selectedSnapshot || trackedSatellites.length === 0) {
