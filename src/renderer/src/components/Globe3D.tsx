@@ -13,7 +13,8 @@ interface Globe3DProps {
 
 const EARTH_RADIUS_M = 6371000;
 const FOOTPRINT_HEIGHT_M = 12000;
-const FOOTPRINT_SEGMENTS = 144;
+const FOOTPRINT_SEGMENTS = 72;
+const MAX_FOOTPRINTS_WITH_ALL_TRACKED = 30;
 const billboardCache = new Map<string, string>();
 
 function footprintRadiusMeters(altitudeKm: number) {
@@ -374,41 +375,45 @@ ${activeObserver.name}`;
       const satelliteColor = Cesium.Color.fromCssColorString(satellite.color);
       const revision = trackRevision(satellite);
       const satelliteId = satellite.id;
+      const shouldShowFootprint =
+        satellite.selected || satellitesRef.current.length <= MAX_FOOTPRINTS_WITH_ALL_TRACKED;
 
-      const footprintId = `${satellite.id}-footprint`;
-      nextEntityIds.add(footprintId);
-      const footprintEntity = viewer.entities.getById(footprintId) ?? viewer.entities.add({ id: footprintId });
-      const footprintStyleKey = `${satellite.color}-${satellite.selected}`;
-      if (!footprintEntity.polygon || !footprintEntity.polyline || footprintStyleRef.current.get(footprintId) !== footprintStyleKey) {
-        footprintEntity.ellipse = undefined;
-        footprintEntity.position = undefined;
-        footprintEntity.polygon = {
-          hierarchy: new Cesium.CallbackProperty(() => {
-            const tracked = satelliteByIdRef.current.get(satelliteId);
-            if (!tracked) {
-              return new Cesium.PolygonHierarchy([]);
-            }
+      if (shouldShowFootprint) {
+        const footprintId = `${satellite.id}-footprint`;
+        nextEntityIds.add(footprintId);
+        const footprintEntity = viewer.entities.getById(footprintId) ?? viewer.entities.add({ id: footprintId });
+        const footprintStyleKey = `${satellite.color}-${satellite.selected}`;
+        if (!footprintEntity.polygon || !footprintEntity.polyline || footprintStyleRef.current.get(footprintId) !== footprintStyleKey) {
+          footprintEntity.ellipse = undefined;
+          footprintEntity.position = undefined;
+          footprintEntity.polygon = {
+            hierarchy: new Cesium.CallbackProperty(() => {
+              const tracked = satelliteByIdRef.current.get(satelliteId);
+              if (!tracked) {
+                return new Cesium.PolygonHierarchy([]);
+              }
 
-            return new Cesium.PolygonHierarchy(footprintPositions(Cesium, tracked));
-          }, false),
-          material: satelliteColor.withAlpha(satellite.selected ? 0.2 : 0.12),
-          perPositionHeight: true
-        };
-        footprintEntity.polyline = {
-          positions: new Cesium.CallbackProperty(() => {
-            const tracked = satelliteByIdRef.current.get(satelliteId);
-            if (!tracked) {
-              return [];
-            }
+              return new Cesium.PolygonHierarchy(footprintPositions(Cesium, tracked));
+            }, false),
+            material: satelliteColor.withAlpha(satellite.selected ? 0.2 : 0.12),
+            perPositionHeight: true
+          };
+          footprintEntity.polyline = {
+            positions: new Cesium.CallbackProperty(() => {
+              const tracked = satelliteByIdRef.current.get(satelliteId);
+              if (!tracked) {
+                return [];
+              }
 
-            const positions = footprintPositions(Cesium, tracked);
-            return [...positions, positions[0]];
-          }, false),
-          width: satellite.selected ? 1.5 : 1,
-          material: satelliteColor.withAlpha(satellite.selected ? 0.72 : 0.45),
-          clampToGround: false
-        };
-        footprintStyleRef.current.set(footprintId, footprintStyleKey);
+              const positions = footprintPositions(Cesium, tracked);
+              return [...positions, positions[0]];
+            }, false),
+            width: satellite.selected ? 1.5 : 1,
+            material: satelliteColor.withAlpha(satellite.selected ? 0.72 : 0.45),
+            clampToGround: false
+          };
+          footprintStyleRef.current.set(footprintId, footprintStyleKey);
+        }
       }
 
       if (satellite.groundTrack.length > 1) {

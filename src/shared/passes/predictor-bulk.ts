@@ -27,15 +27,18 @@ async function getRuntime() {
 export async function predictPassesBulkWasm(
   records: SatelliteRecord[],
   observer: ObserverSite,
-  options: PassPredictOptions = {}
+  options: PassPredictOptions = {},
+  onSatellitePasses?: (passes: PassPrediction[], completed: number, total: number) => void
 ) {
   if (records.length <= 1) {
-    return records.flatMap((record) => predictPassesForSatellite(record, observer, options));
+    const passes = records.flatMap((record) => predictPassesForSatellite(record, observer, options));
+    onSatellitePasses?.(passes, records.length, records.length);
+    return passes;
   }
 
   const start = options.start ?? new Date();
   const end = options.end ?? new Date(start.getTime() + 2 * 86400000);
-  const minElevationDeg = options.minElevationDeg ?? observer.minElevationDeg;
+  const horizonElevationDeg = 0;
   const requestedStepSeconds = options.stepSeconds ?? 60;
   if (!Number.isFinite(requestedStepSeconds) || requestedStepSeconds <= 0) {
     throw new Error("Pass prediction stepSeconds must be greater than zero.");
@@ -90,6 +93,7 @@ export async function predictPassesBulkWasm(
   validRecords.forEach(({ record }, satIndex) => {
     let inPass = false;
     let passStartIndex = -1;
+    const satellitePasses: PassPrediction[] = [];
 
     dates.forEach((date, dateIndex) => {
       const output = propagator.getFormattedOutput(satIndex, dateIndex);
@@ -100,7 +104,7 @@ export async function predictPassesBulkWasm(
       }
 
       const elevationDeg = radiansToDegrees(output.lookAngles.elevation);
-      const above = elevationDeg >= minElevationDeg;
+      const above = elevationDeg >= horizonElevationDeg;
 
       if (!inPass && above) {
         inPass = true;
@@ -126,12 +130,19 @@ export async function predictPassesBulkWasm(
           );
           if (!duplicate) {
             allPasses.push(pass);
+            satellitePasses.push(pass);
           }
         }
         inPass = false;
         passStartIndex = -1;
       }
     });
+
+    onSatellitePasses?.(
+      satellitePasses.sort((left, right) => left.aos.localeCompare(right.aos)),
+      satIndex + 1,
+      validRecords.length
+    );
   });
 
   return allPasses.sort((left, right) => left.aos.localeCompare(right.aos));

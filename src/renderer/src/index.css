@@ -431,6 +431,11 @@ input[type="color"].satellite-color-picker::-moz-color-swatch {
   border-radius: 999px;
 }
 
+.tracker-satellite-more {
+  min-height: 2.25rem;
+  align-self: stretch;
+}
+
 textarea {
   min-height: 132px;
   resize: vertical;
@@ -879,11 +884,13 @@ tr:hover td {
 
 @media (max-width: 767px) and (max-aspect-ratio: 4 / 3) {
   .electron-titlebar {
-    grid-template-columns: minmax(0, 1fr) 138px;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .electron-titlebar-brand {
-    padding-left: 3.55rem;
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .electron-titlebar-center {
@@ -918,5 +925,122 @@ tr:hover td {
   th,
   td {
     padding: 0.62rem 0.65rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .tracker-page {
+    gap: 1rem;
+  }
+
+  .tracker-header {
+    align-items: stretch;
+    gap: 0.9rem;
+  }
+
+  .tracker-header > div:first-child {
+    min-width: 0;
+  }
+
+  .tracker-header h1 {
+    font-size: 1.65rem;
+    line-height: 1.1;
+  }
+
+  .tracker-header .mono {
+    font-size: 0.82rem;
+    white-space: normal;
+  }
+
+  .tracker-view-toggle {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tracker-view-toggle .ui-button {
+    width: 100%;
+  }
+
+  .tracker-satellite-list {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .tracker-satellite-pill {
+    width: 100%;
+    min-width: 0;
+    justify-content: space-between;
+    padding: 0.65rem 0.75rem;
+  }
+
+  .tracker-satellite-pill > span:nth-of-type(1) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tracker-satellite-more {
+    width: 100%;
+  }
+
+  .tracker-timeline {
+    padding: 0;
+  }
+
+  .tracker-timeline [data-slot="card-content"] {
+    padding: 0.85rem;
+  }
+
+  .tracker-timeline-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .tracker-timeline-actions .ui-button {
+    width: 100%;
+  }
+
+  .tracker-speed-control {
+    grid-column: 1 / -1;
+    width: 100%;
+    grid-template-columns: 3.5rem minmax(0, 1fr) 3.5rem;
+    order: 3;
+  }
+
+  .timeline-infinite-scrubber {
+    min-height: 2.25rem;
+  }
+
+  .tracker-map-section {
+    height: min(62vh, 390px);
+    min-height: 300px;
+    border-radius: 9px;
+  }
+
+  .tracker-map-controls {
+    left: 0.65rem;
+    right: 0.65rem;
+    top: 0.65rem;
+    justify-content: flex-end;
+  }
+
+  .tracker-map-controls .ui-button {
+    min-width: 2.25rem;
+    height: 2rem;
+    padding-inline: 0.65rem;
+  }
+
+  .tracker-map-legend {
+    right: 0.65rem;
+    bottom: 0.65rem;
+    left: 0.65rem;
+    max-width: none;
+    flex-wrap: wrap;
+    gap: 0.45rem 0.7rem;
+    font-size: 0.7rem;
   }
 }

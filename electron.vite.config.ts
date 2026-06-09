@@ -36,6 +36,12 @@ export default defineConfig({
       format: "es"
     },
     plugins: [react(), tailwindcss()],
+    server: {
+      allowedHosts: [
+        "desktop-zion",
+        "desktop-zion.tail4dd51a.ts.net"
+      ]
+    },
     build: {
       chunkSizeWarningLimit: 11000
     }

@@ -15,7 +15,16 @@ import {
   SelectValue
 } from "../components/ui/select";
 import { Button } from "../components/ui/button";
+import { Slider } from "../components/ui/slider";
 import { Switch } from "../components/ui/switch";
+
+function clampMinimumElevation(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.min(90, Math.max(0, value));
+}
 
 export function SettingsPage() {
   const { observer, settings, updateObserver, updateSettings, refreshCatalog } = useApp();
@@ -67,7 +76,11 @@ export function SettingsPage() {
       return;
     }
 
-    await updateObserver({ ...draft, name: draft.name.trim() });
+    await updateObserver({
+      ...draft,
+      name: draft.name.trim(),
+      minElevationDeg: clampMinimumElevation(draft.minElevationDeg)
+    });
     observerDirtyRef.current = false;
     setSavedIsError(false);
     setSaved("Observer saved.");
@@ -160,8 +173,7 @@ export function SettingsPage() {
             ["name", "Site name"],
             ["latitude", "Latitude"],
             ["longitude", "Longitude"],
-            ["altitudeM", "Altitude (m)"],
-            ["minElevationDeg", "Minimum elevation (deg)"]
+            ["altitudeM", "Altitude (m)"]
           ].map(([key, label]) => (
             <label key={key} className="block space-y-1.5">
               <span className="text-xs font-medium text-[var(--faint)]">{label}</span>
@@ -183,6 +195,33 @@ export function SettingsPage() {
               />
             </label>
           ))}
+
+          <label className="block space-y-2">
+            <span className="flex items-center justify-between gap-3 text-xs font-medium text-[var(--faint)]">
+              <span>Minimum elevation</span>
+              <span className="mono text-[var(--text)]">{clampMinimumElevation(draft.minElevationDeg).toFixed(0)}°</span>
+            </span>
+            <div className="rounded-md border border-[var(--line-strong)] bg-[var(--bg)] px-3 py-3">
+              <Slider
+                min={0}
+                max={90}
+                step={1}
+                value={[clampMinimumElevation(draft.minElevationDeg)]}
+                aria-label="Minimum elevation"
+                onValueChange={([value]) => {
+                  observerDirtyRef.current = true;
+                  setDraft((current) => ({
+                    ...current,
+                    minElevationDeg: clampMinimumElevation(value ?? 0)
+                  }));
+                }}
+              />
+              <div className="mono mt-2 flex justify-between text-[11px] text-[var(--faint)]">
+                <span>0°</span>
+                <span>90°</span>
+              </div>
+            </div>
+          </label>
         </div>
 
         <div className="mt-5 flex gap-2">

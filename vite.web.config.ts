@@ -30,6 +30,10 @@ export default defineConfig({
     chunkSizeWarningLimit: 5000
   },
   server: {
-    port: 5173
+    port: 5173,
+    allowedHosts: [
+      "desktop-zion",
+      "desktop-zion.tail4dd51a.ts.net"
+    ]
   }
 });

@@ -28,14 +28,14 @@ function refineBoundary(
   low: Date,
   high: Date,
   targetAbove: boolean,
-  minElevationDeg: number
+  thresholdElevationDeg: number
 ) {
   let left = low.getTime();
   let right = high.getTime();
 
   while (right - left > 1000) {
     const mid = new Date((left + right) / 2);
-    const above = elevationAt(record, observer, mid) >= minElevationDeg;
+    const above = elevationAt(record, observer, mid) >= thresholdElevationDeg;
     if (above === targetAbove) {
       right = mid.getTime();
     } else {
@@ -89,7 +89,8 @@ function buildPass(
   record: SatelliteRecord,
   observer: ObserverSite,
   passStart: Date,
-  passEnd: Date
+  passEnd: Date,
+  minElevationDeg: number
 ): PassPrediction | null {
   const samples = buildSamples(record, observer, passStart, passEnd);
   if (samples.length === 0) {
@@ -100,6 +101,10 @@ function buildPass(
     (best, sample) => (sample.elevationDeg > best.elevationDeg ? sample : best),
     samples[0]
   );
+
+  if (tcaSample.elevationDeg < minElevationDeg) {
+    return null;
+  }
 
   try {
     const aosSnapshot = computeOrbitSnapshot(record, passStart, observer);
@@ -134,6 +139,7 @@ export function predictPassesForSatellite(
   const start = options.start ?? new Date();
   const end = options.end ?? new Date(start.getTime() + 7 * 86400000);
   const minElevationDeg = options.minElevationDeg ?? observer.minElevationDeg;
+  const horizonElevationDeg = 0;
   const stepSeconds = options.stepSeconds ?? 30;
   const passes: PassPrediction[] = [];
   validateOptions(start, end, stepSeconds);
@@ -146,7 +152,7 @@ export function predictPassesForSatellite(
     return [];
   }
 
-  let inPass = previousElevation >= minElevationDeg;
+  let inPass = previousElevation >= horizonElevationDeg;
   let passStart: Date | null = inPass ? start : null;
   const stepMs = stepSeconds * 1000;
 
@@ -167,15 +173,15 @@ export function predictPassesForSatellite(
       continue;
     }
 
-    const previousAbove = previousElevation >= minElevationDeg;
-    const currentlyAbove = currentElevation >= minElevationDeg;
+    const previousAbove = previousElevation >= horizonElevationDeg;
+    const currentlyAbove = currentElevation >= horizonElevationDeg;
 
     if (!inPass && !previousAbove && currentlyAbove) {
       inPass = true;
-      passStart = refineBoundary(record, observer, previous, current, true, minElevationDeg);
+      passStart = refineBoundary(record, observer, previous, current, true, horizonElevationDeg);
     } else if (inPass && passStart && previousAbove && !currentlyAbove) {
-      const passEnd = refineBoundary(record, observer, previous, current, false, minElevationDeg);
-      const pass = buildPass(record, observer, passStart, passEnd);
+      const passEnd = refineBoundary(record, observer, previous, current, false, horizonElevationDeg);
+      const pass = buildPass(record, observer, passStart, passEnd, minElevationDeg);
       if (pass) {
         passes.push(pass);
       }

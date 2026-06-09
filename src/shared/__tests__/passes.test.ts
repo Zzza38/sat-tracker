@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_OBSERVER } from "@/shared/observer/defaults";
+import { computeOrbitSnapshot } from "@/shared/propagation/engine";
 import {
   passesToCsv,
   passesToIcs,
@@ -26,6 +27,22 @@ describe("pass predictor", () => {
     expect(passes.length).toBeGreaterThan(0);
     expect(passes[0].maxElevationDeg).toBeGreaterThan(5);
     expect(passes[0].samples.length).toBeGreaterThan(2);
+  });
+
+  it("uses minimum elevation only as a max-elevation filter", () => {
+    const [pass] = predictPassesForSatellite(record, DEFAULT_OBSERVER, {
+      start: new Date("2019-06-05T00:00:00Z"),
+      end: new Date("2019-06-07T00:00:00Z"),
+      minElevationDeg: 5,
+      stepSeconds: 30
+    });
+
+    const aosElevation = computeOrbitSnapshot(record, new Date(pass.aos), DEFAULT_OBSERVER).elevationDeg;
+    const losElevation = computeOrbitSnapshot(record, new Date(pass.los), DEFAULT_OBSERVER).elevationDeg;
+
+    expect(pass.maxElevationDeg).toBeGreaterThan(5);
+    expect(Math.abs(aosElevation)).toBeLessThan(0.2);
+    expect(Math.abs(losElevation)).toBeLessThan(0.2);
   });
 
   it("rejects non-positive step sizes", () => {

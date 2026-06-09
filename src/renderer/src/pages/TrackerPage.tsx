@@ -14,6 +14,9 @@ import { Slider } from "../components/ui/slider";
 
 const TRACK_WINDOW_MINUTES = 180;
 const TRACK_STEP_SECONDS = 60;
+const MEDIUM_TRACKED_COUNT = 12;
+const LARGE_TRACKED_COUNT = 30;
+const COLLAPSED_TRACKED_LIST_COUNT = 12;
 const INITIAL_TIMELINE_MIN_MINUTES = -180;
 const INITIAL_TIMELINE_MAX_MINUTES = 180;
 const TIMELINE_STEP_MINUTES = 0.5;
@@ -67,6 +70,30 @@ function rangeForTimelineOffset(minutes: number) {
     min: Math.min(INITIAL_TIMELINE_MIN_MINUTES, minutes),
     max: Math.max(INITIAL_TIMELINE_MAX_MINUTES, minutes)
   };
+}
+
+function trackerLiveIntervalMs(satelliteCount: number) {
+  if (satelliteCount > LARGE_TRACKED_COUNT) {
+    return 1000;
+  }
+
+  if (satelliteCount > MEDIUM_TRACKED_COUNT) {
+    return 500;
+  }
+
+  return 250;
+}
+
+function groundTrackStepSeconds(satelliteCount: number) {
+  if (satelliteCount > LARGE_TRACKED_COUNT) {
+    return 180;
+  }
+
+  if (satelliteCount > MEDIUM_TRACKED_COUNT) {
+    return 120;
+  }
+
+  return TRACK_STEP_SECONDS;
 }
 
 function readTrackerState() {
@@ -133,8 +160,9 @@ export function TrackerPage() {
   const [timelinePlaying, setTimelinePlaying] = useState(storedTrackerState.playing ?? false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(storedTrackerState.playbackSpeed ?? 1);
   const [showSunMoon, setShowSunMoon] = useState(storedTrackerState.showSunMoon ?? true);
-  const liveNow = useTicker(100);
-  const playbackNow = useTicker(50);
+  const [trackedListExpanded, setTrackedListExpanded] = useState(false);
+  const liveNow = useTicker(trackerLiveIntervalMs(visibleSatellites.length));
+  const playbackNow = useTicker(visibleSatellites.length > LARGE_TRACKED_COUNT ? 250 : 100);
   const previousPlaybackTickRef = useRef(playbackNow.getTime());
   const currentTime = useMemo(
     () =>
@@ -167,10 +195,12 @@ export function TrackerPage() {
       }
     };
   }, []);
-  const trackTimeKey = Math.floor(currentTime.getTime() / 30000);
+  const trackRefreshMs = visibleSatellites.length > LARGE_TRACKED_COUNT ? 60000 : 30000;
+  const trackTimeKey = Math.floor(currentTime.getTime() / trackRefreshMs);
+  const trackStepSeconds = groundTrackStepSeconds(visibleSatellites.length);
   const trackStart = useMemo(
-    () => new Date(trackTimeKey * 30000 - (TRACK_WINDOW_MINUTES / 2) * 60000),
-    [trackTimeKey]
+    () => new Date(trackTimeKey * trackRefreshMs - (TRACK_WINDOW_MINUTES / 2) * 60000),
+    [trackRefreshMs, trackTimeKey]
   );
   const groundTracksById = useMemo(() => {
     return new Map(
@@ -180,11 +210,11 @@ export function TrackerPage() {
           satellite,
           trackStart,
           TRACK_WINDOW_MINUTES + 1,
-          TRACK_STEP_SECONDS
+          trackStepSeconds
         )
       ])
     );
-  }, [trackStart, visibleSatellites]);
+  }, [trackStart, trackStepSeconds, visibleSatellites]);
 
   useEffect(() => {
     const previous = previousPlaybackTickRef.current;
@@ -241,6 +271,19 @@ export function TrackerPage() {
       }),
     [currentTime, getSatelliteColor, groundTracksById, observer, selectedSatelliteId, visibleSatelliteIds, visibleSatellites]
   );
+  const displayedTrackedSatellites = trackedListExpanded
+    ? trackedSatellites
+    : trackedSatellites.slice(0, COLLAPSED_TRACKED_LIST_COUNT);
+  const hiddenTrackedSatelliteCount = Math.max(
+    trackedSatellites.length - displayedTrackedSatellites.length,
+    0
+  );
+
+  useEffect(() => {
+    if (trackedSatellites.length <= COLLAPSED_TRACKED_LIST_COUNT && trackedListExpanded) {
+      setTrackedListExpanded(false);
+    }
+  }, [trackedListExpanded, trackedSatellites.length]);
 
   const focusSatellite = selectedSatellite ?? visibleSatellites[0];
   const selectedTrackedSatellite = trackedSatellites.find((satellite) => satellite.id === focusSatellite?.id);
@@ -408,8 +451,8 @@ export function TrackerPage() {
   const timelineFillWidthPercent = Math.abs(timelineThumbPercent - timelineCenterPercent);
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="tracker-page space-y-5">
+      <div className="tracker-header flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="label">Live tracker</p>
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">Orbital view</h1>
@@ -418,7 +461,7 @@ export function TrackerPage() {
             {trackedSatellites.length === 1 ? "" : "s"}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="tracker-view-toggle flex gap-2">
           <Button variant={trackerViewMode === "2d" ? "default" : "secondary"} onClick={() => setTrackerViewMode("2d")}>
             2D Map
           </Button>
@@ -428,11 +471,11 @@ export function TrackerPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {trackedSatellites.map((satellite) => (
+      <div className="tracker-satellite-list flex flex-wrap gap-2">
+        {displayedTrackedSatellites.map((satellite) => (
           <div
             key={satellite.id}
-            className="flex cursor-pointer items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]"
+            className="tracker-satellite-pill flex cursor-pointer items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]"
             role="button"
             tabIndex={0}
             title="Inspect this satellite"
@@ -450,12 +493,20 @@ export function TrackerPage() {
               value={satellite.color}
               title="Change satellite color"
               aria-label={`Change ${satellite.name} color`}
+              onClick={(event) => event.stopPropagation()}
               onChange={(event) => void setSatelliteColor(satellite.id, event.target.value)}
             />
             <span className="font-medium">{satellite.name}</span>
             <span className="mono text-xs text-[var(--faint)]">{satellite.noradId}</span>
             {watchlistIds.includes(satellite.id) ? (
-              <Button variant="ghost" size="xs" onClick={() => void untrackSatellite(satellite.id)}>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void untrackSatellite(satellite.id);
+                }}
+              >
                 Untrack
               </Button>
             ) : (
@@ -463,6 +514,16 @@ export function TrackerPage() {
             )}
           </div>
         ))}
+        {trackedSatellites.length > COLLAPSED_TRACKED_LIST_COUNT ? (
+          <Button
+            className="tracker-satellite-more"
+            variant="secondary"
+            size="sm"
+            onClick={() => setTrackedListExpanded((current) => !current)}
+          >
+            {trackedListExpanded ? "Show less" : `Show ${hiddenTrackedSatelliteCount} more`}
+          </Button>
+        ) : null}
       </div>
 
       <Card className="tracker-timeline border-[var(--line-strong)] bg-[var(--surface)] py-0 shadow-none">
@@ -485,7 +546,7 @@ export function TrackerPage() {
               <div className="mono mt-1 text-xs text-[var(--muted)]">{currentTime.toLocaleString()}</div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="tracker-timeline-actions flex flex-wrap items-center justify-end gap-2">
               <Button
                 variant={showSunMoon ? "default" : "secondary"}
                 size="sm"
@@ -495,7 +556,7 @@ export function TrackerPage() {
                 <SunMoon size={14} />
                 Sun/Moon
               </Button>
-              <div className="grid w-[220px] grid-cols-[42px_1fr_48px] items-center gap-2 rounded-md border border-[var(--line-strong)] bg-[var(--surface-2)] px-3 py-2">
+              <div className="tracker-speed-control grid w-[220px] grid-cols-[42px_1fr_48px] items-center gap-2 rounded-md border border-[var(--line-strong)] bg-[var(--surface-2)] px-3 py-2">
                 <span className="text-xs font-medium text-[var(--muted)]">Speed</span>
                 <Slider
                   min={0.25}

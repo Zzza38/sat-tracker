@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clsx } from "clsx";
-import { predictPassesBulk, passesToCsv, passesToIcs } from "@/shared/passes/predictor";
+import { predictPassesBulkStreaming, passesToCsv, passesToIcs } from "@/shared/passes/predictor";
 import { formatDuration, formatTimestamp } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
 import { ElevationChart } from "../components/ElevationChart";
@@ -38,9 +38,11 @@ export function PassesPage() {
   } = useApp();
   const geometryRef = useRef<HTMLElement | null>(null);
   const selectedPassRef = useRef(selectedPass);
+  const computeRequestRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [days, setDays] = useState(7);
   const [error, setError] = useState<string | null>(null);
+  const [computeProgress, setComputeProgress] = useState<{ completed: number; total: number } | null>(null);
   const [colorByElevation, setColorByElevation] = useState(readColorByElevationPreference);
   const visiblePassTargets = useMemo(() => {
     if (watchlistIds.length > 0) {
@@ -63,8 +65,12 @@ export function PassesPage() {
   }, [selectedPass]);
 
   const computePasses = useCallback(async () => {
+    const requestId = computeRequestRef.current + 1;
+    computeRequestRef.current = requestId;
+    const streamedPasses: typeof passes = [];
     setLoading(true);
     setError(null);
+    setComputeProgress(null);
     setPasses([]);
     try {
       const targets = visiblePassTargets;
@@ -72,17 +78,36 @@ export function PassesPage() {
       if (targets.length === 0) {
         setPasses([]);
         setError("No satellites selected for pass prediction.");
+        setComputeProgress(null);
         return;
       }
 
+      setComputeProgress({ completed: 0, total: targets.length });
       const start = new Date(Math.floor(Date.now() / 60000) * 60000);
       const end = new Date(start.getTime() + days * 86400000);
-      const results = await predictPassesBulk(targets, observer, {
-        start,
-        end,
-        minElevationDeg: observer.minElevationDeg,
-        stepSeconds: 45
-      });
+      const results = await predictPassesBulkStreaming(
+        targets,
+        observer,
+        {
+          start,
+          end,
+          minElevationDeg: observer.minElevationDeg,
+          stepSeconds: 45
+        },
+        ({ passes: satellitePasses, completed, total }) => {
+          if (computeRequestRef.current !== requestId) {
+            return;
+          }
+
+          streamedPasses.push(...satellitePasses);
+          streamedPasses.sort((left, right) => left.aos.localeCompare(right.aos));
+          setPasses([...streamedPasses]);
+          setComputeProgress({ completed, total });
+        }
+      );
+      if (computeRequestRef.current !== requestId) {
+        return;
+      }
       setPasses(results);
       const previous = selectedPassRef.current;
       const preserved = previous
@@ -92,9 +117,15 @@ export function PassesPage() {
         : null;
       selectPass(preserved ?? (previous ? null : results[0] ?? null));
     } catch (caught) {
+      if (computeRequestRef.current !== requestId) {
+        return;
+      }
       setError(caught instanceof Error ? caught.message : "Pass prediction failed.");
     } finally {
-      setLoading(false);
+      if (computeRequestRef.current === requestId) {
+        setLoading(false);
+        setComputeProgress(null);
+      }
     }
   }, [days, observer, selectPass, setPasses, visiblePassTargets]);
 
@@ -180,7 +211,14 @@ export function PassesPage() {
         </div>
 
         {error ? <p className="mono mt-4 text-sm text-[var(--danger)]">{error}</p> : null}
-        {loading ? <p className="mono mt-4 text-sm text-[var(--muted)]" role="status">Computing passes...</p> : null}
+        {loading ? (
+          <p className="mono mt-4 text-sm text-[var(--muted)]" role="status">
+            Computing passes
+            {computeProgress ? ` ${computeProgress.completed}/${computeProgress.total}` : ""}
+            {passes.length > 0 ? ` · ${passes.length} found so far` : ""}
+            ...
+          </p>
+        ) : null}
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <label className="flex items-center gap-2.5 text-sm text-[var(--text)]">

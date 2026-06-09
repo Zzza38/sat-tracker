@@ -214,6 +214,8 @@ export function Map2D({
       })),
     [satellites]
   );
+  const showSatelliteLabels = satellites.length <= 20;
+  const showSatelliteFootprints = satellites.length <= 30;
 
   function toViewBoxPoint(clientX: number, clientY: number) {
     const bounds = svgRef.current?.getBoundingClientRect();
@@ -258,7 +260,7 @@ export function Map2D({
   const markerScale = 1 / viewport.zoom;
 
   return (
-    <section className="relative h-[380px] w-full select-none overflow-hidden rounded-[10px] border border-[var(--line)] bg-[#0b0f14] sm:h-[460px] lg:h-[520px]">
+    <section className="tracker-map-section relative h-[380px] w-full select-none overflow-hidden rounded-[10px] border border-[var(--line)] bg-[#0b0f14] sm:h-[460px] lg:h-[520px]">
       <svg
         ref={svgRef}
         viewBox={`0 0 ${WORLD_WIDTH} ${WORLD_HEIGHT}`}
@@ -368,7 +370,9 @@ export function Map2D({
                 ) : null}
 
                 <g strokeWidth="1.5">
-                  {satelliteViews.map((satellite) => (
+                  {satelliteViews
+                    .filter((satellite) => showSatelliteFootprints || satellite.selected)
+                    .map((satellite) => (
                     <ellipse
                       key={`${copy}-${satellite.id}-footprint`}
                       cx={satellite.point.x}
@@ -427,12 +431,16 @@ export function Map2D({
                     <title>{`Double-click to inspect ${satellite.name}`}</title>
                     <circle r={satellite.selected ? "10" : "7"} fill={satellite.color} filter="url(#markerGlow)" />
                     <circle r={satellite.selected ? "16" : "12"} fill="none" stroke={satellite.color} strokeOpacity="0.68" strokeWidth="2.5" />
-                    <text x="16" y="-12" fill="#eef2f0" fontSize="16" fontWeight="700">
-                      {satellite.name}
-                    </text>
-                    <text x="16" y="7" fill="#9aa8b7" fontSize="12" fontFamily="IBM Plex Mono, monospace">
-                      NORAD ID {satellite.noradId}
-                    </text>
+                    {showSatelliteLabels || satellite.selected ? (
+                      <>
+                        <text x="16" y="-12" fill="#eef2f0" fontSize="16" fontWeight="700">
+                          {satellite.name}
+                        </text>
+                        <text x="16" y="7" fill="#9aa8b7" fontSize="12" fontFamily="IBM Plex Mono, monospace">
+                          NORAD ID {satellite.noradId}
+                        </text>
+                      </>
+                    ) : null}
                   </g>
                 ))}
               </g>
@@ -441,7 +449,7 @@ export function Map2D({
         </g>
       </svg>
 
-      <div className="pointer-events-none absolute right-3 top-3 flex gap-2">
+      <div className="tracker-map-controls pointer-events-none absolute right-3 top-3 flex gap-2">
         <Button className="pointer-events-auto" variant="secondary" size="xs" onClick={() => zoomBy(1.18)}>
           +
         </Button>
@@ -453,7 +461,7 @@ export function Map2D({
         </Button>
       </div>
 
-      <div className="pointer-events-none absolute bottom-3 left-3 flex gap-3 rounded-[10px] border border-[var(--line)] bg-black/35 px-3 py-2 text-xs text-[var(--muted)] backdrop-blur">
+      <div className="tracker-map-legend pointer-events-none absolute bottom-3 left-3 flex gap-3 rounded-[10px] border border-[var(--line)] bg-black/35 px-3 py-2 text-xs text-[var(--muted)] backdrop-blur">
         {satellites.slice(0, 3).map((satellite) => (
           <span key={satellite.id} className="inline-flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full" style={{ background: satellite.color }} />

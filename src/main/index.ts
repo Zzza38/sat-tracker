@@ -8,6 +8,11 @@ import {
   isWindowControlAction
 } from "./ipc-contract";
 
+const TRUSTED_RENDERER_HOSTS = new Set([
+  "desktop-zion",
+  "desktop-zion.tail4dd51a.ts.net"
+]);
+
 function appIconPath() {
   return process.env.ELECTRON_RENDERER_URL
     ? path.resolve("public/sat-tracker-icon.ico")
@@ -16,12 +21,21 @@ function appIconPath() {
 
 function isAllowedRendererUrl(rawUrl: string) {
   try {
+    const url = new URL(rawUrl);
     if (process.env.ELECTRON_RENDERER_URL) {
-      return new URL(rawUrl).origin === new URL(process.env.ELECTRON_RENDERER_URL).origin;
+      const configuredRenderer = new URL(process.env.ELECTRON_RENDERER_URL);
+      return (
+        url.origin === configuredRenderer.origin ||
+        (
+          url.protocol === configuredRenderer.protocol &&
+          url.port === configuredRenderer.port &&
+          TRUSTED_RENDERER_HOSTS.has(url.hostname.toLowerCase())
+        )
+      );
     }
 
     const rendererDirectory = path.resolve(__dirname, "../renderer");
-    const candidate = path.resolve(fileURLToPath(rawUrl));
+    const candidate = path.resolve(fileURLToPath(url));
     return candidate === rendererDirectory || candidate.startsWith(`${rendererDirectory}${path.sep}`);
   } catch {
     return false;
