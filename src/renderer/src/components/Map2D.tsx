@@ -428,7 +428,7 @@ export function Map2D({
                       onSatelliteDoubleClick?.(satellite.id);
                     }}
                   >
-                    <title>{`Double-click to inspect ${satellite.name}`}</title>
+                    <title>{`Click to inspect ${satellite.name}`}</title>
                     <circle r={satellite.selected ? "10" : "7"} fill={satellite.color} filter="url(#markerGlow)" />
                     <circle r={satellite.selected ? "16" : "12"} fill="none" stroke={satellite.color} strokeOpacity="0.68" strokeWidth="2.5" />
                     {showSatelliteLabels || satellite.selected ? (

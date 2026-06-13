@@ -31,9 +31,6 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    allowedHosts: [
-      "desktop-zion",
-      "desktop-zion.tail4dd51a.ts.net"
-    ]
+    allowedHosts: true
   }
 });

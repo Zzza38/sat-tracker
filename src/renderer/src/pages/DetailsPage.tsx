@@ -20,7 +20,12 @@ export function DetailsPage() {
       return null;
     }
 
-    return computeOrbitSnapshot(selectedSatellite, now, observer);
+    // Bad or decayed elements should degrade gracefully instead of crashing the page.
+    try {
+      return computeOrbitSnapshot(selectedSatellite, now, observer);
+    } catch {
+      return null;
+    }
   }, [now, observer, selectedSatellite]);
 
   const metrics = useMemo(() => {
@@ -28,26 +33,49 @@ export function DetailsPage() {
       return null;
     }
 
-    return getOrbitMetrics(selectedSatellite);
+    try {
+      return getOrbitMetrics(selectedSatellite);
+    } catch {
+      return null;
+    }
   }, [selectedSatellite]);
 
+  // Re-anchor the prediction window every minute so the list rolls forward over time.
+  const passWindowKey = Math.floor(now.getTime() / 60000);
   const upcoming = useMemo(() => {
     if (!selectedSatellite) {
       return [];
     }
 
-    return predictPassesForSatellite(selectedSatellite, observer, {
-      start: new Date(),
-      end: new Date(Date.now() + 3 * 86400000)
-    }).slice(0, 5);
-  }, [observer, selectedSatellite]);
+    const start = new Date(passWindowKey * 60000);
+    try {
+      return predictPassesForSatellite(selectedSatellite, observer, {
+        start,
+        end: new Date(start.getTime() + 3 * 86400000)
+      }).slice(0, 5);
+    } catch {
+      return [];
+    }
+  }, [observer, passWindowKey, selectedSatellite]);
   const epochAge = selectedSatellite ? epochAgeDays(selectedSatellite.epoch, now) : undefined;
 
   if (!selectedSatellite || !snapshot || !metrics) {
     return (
       <div className="panel p-8">
         <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">Satellite details</h1>
-        <p className="mt-2 text-[var(--muted)]">Select a satellite to inspect orbital elements and upcoming passes.</p>
+        {selectedSatellite ? (
+          <>
+            <p className="mt-2 text-[var(--muted)]">
+              Could not propagate {selectedSatellite.name}. Its orbital elements may be stale or the object may have
+              decayed.
+            </p>
+            <Button className="mt-4" onClick={() => void refreshSelectedSatellite()}>
+              Refresh TLE
+            </Button>
+          </>
+        ) : (
+          <p className="mt-2 text-[var(--muted)]">Select a satellite to inspect orbital elements and upcoming passes.</p>
+        )}
       </div>
     );
   }
@@ -77,7 +105,7 @@ export function DetailsPage() {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 md:grid-cols-4">
           {[
             ["Inclination", `${metrics.inclinationDeg.toFixed(2)}°`],
             ["Period", `${metrics.periodMin.toFixed(1)} min`],

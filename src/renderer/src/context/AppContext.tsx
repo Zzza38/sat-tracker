@@ -64,6 +64,7 @@ interface AppContextValue {
   selectedPass: PassPrediction | null;
   trackerPreviewRequest: TrackerPreviewRequest | null;
   bootstrapping: boolean;
+  catalogSyncing: boolean;
   error: string | null;
   clearError: () => void;
   refreshCatalog: (options?: { silent?: boolean }) => Promise<void>;
@@ -90,7 +91,10 @@ const AppContext = createContext<AppContextValue | null>(null);
 let seedPromise: Promise<void> | null = null;
 let autoRefreshPromise: Promise<void> | null = null;
 
-async function fetchInitialSources(appSettings: Awaited<ReturnType<typeof getSettings>>) {
+async function fetchInitialSources(
+  appSettings: Awaited<ReturnType<typeof getSettings>>,
+  onSourceImported?: () => Promise<void>
+) {
   const results: PromiseSettledResult<{ source: (typeof appSettings.tleSources)[number]; importedCount: number }>[] =
     new Array(appSettings.tleSources.length);
   await Promise.all(
@@ -98,9 +102,13 @@ async function fetchInitialSources(appSettings: Awaited<ReturnType<typeof getSet
       for (let index = workerIndex; index < appSettings.tleSources.length; index += 2) {
         const source = appSettings.tleSources[index];
         try {
+          const importedCount = await importFromTleSource(source);
+          if (importedCount > 0) {
+            await onSourceImported?.();
+          }
           results[index] = {
             status: "fulfilled",
-            value: { source, importedCount: await importFromTleSource(source) }
+            value: { source, importedCount }
           };
         } catch (reason) {
           results[index] = { status: "rejected", reason };
@@ -129,8 +137,14 @@ function catalogNeedsRefresh(
   records: SatelliteRecord[],
   appSettings: Awaited<ReturnType<typeof getSettings>>
 ) {
-  if (records.length === 0 || appSettings.tleSources.length === 0) {
+  if (appSettings.tleSources.length === 0) {
     return false;
+  }
+
+  // An empty catalog with configured sources should always recover via a
+  // background import, even after the initial seed already ran once.
+  if (records.length === 0) {
+    return true;
   }
 
   const refreshMs =
@@ -172,6 +186,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedPass, setSelectedPass] = useState<PassPrediction | null>(null);
   const [trackerPreviewRequest, setTrackerPreviewRequest] = useState<TrackerPreviewRequest | null>(null);
   const [bootstrapping, setBootstrapping] = useState(true);
+  const [catalogSyncing, setCatalogSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bootstrappedRef = useRef(false);
 
@@ -210,18 +225,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     try {
       await ensureSeedData();
-      let records = await listSatellites();
+      const records = await listSatellites();
       const appSettings = await getSettings();
       let shouldRefreshInBackground = false;
 
       if (records.length === 0 && !appSettings.initialSourcesFetched) {
-        if (!seedPromise) {
-          seedPromise = fetchInitialSources(appSettings).finally(() => {
-            seedPromise = null;
-          });
-        }
-        await seedPromise;
-        records = await listSatellites();
+        shouldRefreshInBackground = true;
       } else if (catalogNeedsRefresh(records, appSettings)) {
         shouldRefreshInBackground = true;
       }
@@ -254,29 +263,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
 
       if (shouldRefreshInBackground && !autoRefreshPromise) {
-        autoRefreshPromise = fetchInitialSources(appSettings)
-          .then(async () => {
-            const [freshRecords, freshSettings, freshWatchlist] = await Promise.all([
-              listSatellites(),
-              getSettings(),
-              db.watchlists.get("default")
-            ]);
-            setSatellites(freshRecords);
-            setSettings(freshSettings);
-            setWatchlistIds(freshWatchlist?.satelliteIds ?? []);
-            setSelectedSatelliteIdState((current) => {
-              const next = current && freshRecords.some((record) => record.id === current)
-                ? current
-                : chooseDefaultSatelliteId(freshRecords, freshWatchlist?.satelliteIds ?? []);
-              writeUiState({ selectedSatelliteId: next });
-              return next;
-            });
-          })
-          .catch(() => {
-            // Cached data remains usable when a background catalog refresh fails.
+        setCatalogSyncing(true);
+        const updateCatalogFromCache = async () => {
+          const [freshRecords, freshSettings, freshWatchlist] = await Promise.all([
+            listSatellites(),
+            getSettings(),
+            db.watchlists.get("default")
+          ]);
+          setSatellites(freshRecords);
+          setSettings(freshSettings);
+          setWatchlistIds(freshWatchlist?.satelliteIds ?? []);
+          setSelectedSatelliteIdState((current) => {
+            const next = current && freshRecords.some((record) => record.id === current)
+              ? current
+              : chooseDefaultSatelliteId(freshRecords, freshWatchlist?.satelliteIds ?? []);
+            writeUiState({ selectedSatelliteId: next });
+            return next;
+          });
+        };
+        const sourceImportPromise = records.length === 0 && !appSettings.initialSourcesFetched
+          ? (seedPromise ??= fetchInitialSources(appSettings, updateCatalogFromCache).finally(() => {
+              seedPromise = null;
+            }))
+          : fetchInitialSources(appSettings);
+
+        autoRefreshPromise = sourceImportPromise
+          .then(updateCatalogFromCache)
+          .catch((caught) => {
+            if (records.length === 0) {
+              setError(caught instanceof Error ? caught.message : "Failed to load catalog.");
+            }
           })
           .finally(() => {
             autoRefreshPromise = null;
+            setCatalogSyncing(false);
           });
       }
     } catch (caught) {
@@ -335,6 +355,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedPass,
     trackerPreviewRequest,
     bootstrapping,
+    catalogSyncing,
     error,
     clearError: () => setError(null),
     refreshCatalog,
@@ -409,6 +430,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPasses
   }), [
     bootstrapping,
+    catalogSyncing,
     error,
     observer,
     page,

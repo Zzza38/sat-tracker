@@ -85,14 +85,42 @@ function buildSamples(
   return samples;
 }
 
+function refinePeak(
+  record: SatelliteRecord,
+  observer: ObserverSite,
+  around: Date,
+  windowMs: number,
+  passStart: Date,
+  passEnd: Date
+) {
+  // Elevation is unimodal near the culmination, so a ternary search converges
+  // on the true peak instead of the nearest coarse sample.
+  let left = Math.max(passStart.getTime(), around.getTime() - windowMs);
+  let right = Math.min(passEnd.getTime(), around.getTime() + windowMs);
+
+  while (right - left > 500) {
+    const third = (right - left) / 3;
+    const lower = left + third;
+    const upper = right - third;
+    if (elevationAt(record, observer, new Date(lower)) < elevationAt(record, observer, new Date(upper))) {
+      left = lower;
+    } else {
+      right = upper;
+    }
+  }
+
+  return new Date((left + right) / 2);
+}
+
 function buildPass(
   record: SatelliteRecord,
   observer: ObserverSite,
   passStart: Date,
   passEnd: Date,
-  minElevationDeg: number
+  minElevationDeg: number,
+  sampleStepSeconds = 15
 ): PassPrediction | null {
-  const samples = buildSamples(record, observer, passStart, passEnd);
+  const samples = buildSamples(record, observer, passStart, passEnd, sampleStepSeconds);
   if (samples.length === 0) {
     return null;
   }
@@ -102,22 +130,35 @@ function buildPass(
     samples[0]
   );
 
-  if (tcaSample.elevationDeg < minElevationDeg) {
+  let tcaDate = new Date(tcaSample.timestamp);
+  let tcaElevationDeg = tcaSample.elevationDeg;
+  try {
+    const refined = refinePeak(record, observer, tcaDate, sampleStepSeconds * 1000, passStart, passEnd);
+    const refinedElevation = elevationAt(record, observer, refined);
+    if (refinedElevation > tcaElevationDeg) {
+      tcaDate = refined;
+      tcaElevationDeg = refinedElevation;
+    }
+  } catch {
+    // Fall back to the coarse sample peak when refinement cannot propagate.
+  }
+
+  if (tcaElevationDeg < minElevationDeg) {
     return null;
   }
 
   try {
     const aosSnapshot = computeOrbitSnapshot(record, passStart, observer);
     const losSnapshot = computeOrbitSnapshot(record, passEnd, observer);
-    const tcaSnapshot = computeOrbitSnapshot(record, new Date(tcaSample.timestamp), observer);
+    const tcaSnapshot = computeOrbitSnapshot(record, tcaDate, observer);
 
     return {
       satelliteId: record.id,
       satelliteName: record.name,
       aos: passStart.toISOString(),
       los: passEnd.toISOString(),
-      tca: tcaSample.timestamp,
-      maxElevationDeg: tcaSample.elevationDeg,
+      tca: tcaDate.toISOString(),
+      maxElevationDeg: tcaElevationDeg,
       durationSec: (passEnd.getTime() - passStart.getTime()) / 1000,
       aosAzimuthDeg: aosSnapshot.azimuthDeg,
       tcaAzimuthDeg: tcaSnapshot.azimuthDeg,

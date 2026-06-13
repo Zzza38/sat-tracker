@@ -259,8 +259,15 @@ export function PassesPage() {
                       selectedPass.aos === pass.aos &&
                       "bg-[var(--accent-soft)]"
                   )}
+                  tabIndex={0}
                   onClick={() => selectPass(pass)}
                   onDoubleClick={() => inspectPass(pass)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      inspectPass(pass);
+                    }
+                  }}
                   title="Double-click to inspect pass geometry"
                 >
                   <td>

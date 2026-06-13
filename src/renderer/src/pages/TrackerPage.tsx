@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { Clock3, Pause, Play, RotateCcw, SunMoon } from "lucide-react";
 import { buildGroundTrack, computeOrbitSnapshot } from "@/shared/propagation/engine";
+import type { GroundTrackPoint } from "@/shared/types";
 import { predictPassesForSatellite } from "@/shared/passes/predictor-core";
 import { formatDuration, formatTimestamp } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
@@ -204,15 +205,16 @@ export function TrackerPage() {
   );
   const groundTracksById = useMemo(() => {
     return new Map(
-      visibleSatellites.map((satellite) => [
-        satellite.id,
-        buildGroundTrack(
-          satellite,
-          trackStart,
-          TRACK_WINDOW_MINUTES + 1,
-          trackStepSeconds
-        )
-      ])
+      visibleSatellites.map((satellite) => {
+        try {
+          return [
+            satellite.id,
+            buildGroundTrack(satellite, trackStart, TRACK_WINDOW_MINUTES + 1, trackStepSeconds)
+          ] as const;
+        } catch {
+          return [satellite.id, [] as GroundTrackPoint[]] as const;
+        }
+      })
     );
   }, [trackStart, trackStepSeconds, visibleSatellites]);
 
@@ -252,22 +254,27 @@ export function TrackerPage() {
 
   const trackedSatellites = useMemo<TrackedSatelliteView[]>(
     () =>
-      visibleSatellites.map((satellite) => {
-        const snapshot = computeOrbitSnapshot(satellite, currentTime, observer);
-        return {
-          id: satellite.id,
-          name: satellite.name,
-          noradId: satellite.noradId,
-          latitudeDeg: snapshot.latitudeDeg,
-          longitudeDeg: snapshot.longitudeDeg,
-          altitudeKm: snapshot.altitudeKm,
-          azimuthDeg: snapshot.azimuthDeg,
-          elevationDeg: snapshot.elevationDeg,
-          rangeKm: snapshot.rangeKm,
-          groundTrack: groundTracksById.get(satellite.id) ?? [],
-          selected: satellite.id === selectedSatelliteId,
-          color: getSatelliteColor(satellite.id, visibleSatelliteIds)
-        };
+      visibleSatellites.flatMap((satellite) => {
+        // A decayed or malformed satellite must not take down the whole tracker.
+        try {
+          const snapshot = computeOrbitSnapshot(satellite, currentTime, observer);
+          return [{
+            id: satellite.id,
+            name: satellite.name,
+            noradId: satellite.noradId,
+            latitudeDeg: snapshot.latitudeDeg,
+            longitudeDeg: snapshot.longitudeDeg,
+            altitudeKm: snapshot.altitudeKm,
+            azimuthDeg: snapshot.azimuthDeg,
+            elevationDeg: snapshot.elevationDeg,
+            rangeKm: snapshot.rangeKm,
+            groundTrack: groundTracksById.get(satellite.id) ?? [],
+            selected: satellite.id === selectedSatelliteId,
+            color: getSatelliteColor(satellite.id, visibleSatelliteIds)
+          }];
+        } catch {
+          return [];
+        }
       }),
     [currentTime, getSatelliteColor, groundTracksById, observer, selectedSatelliteId, visibleSatelliteIds, visibleSatellites]
   );
@@ -292,7 +299,11 @@ export function TrackerPage() {
       return null;
     }
 
-    return computeOrbitSnapshot(focusSatellite, currentTime, observer);
+    try {
+      return computeOrbitSnapshot(focusSatellite, currentTime, observer);
+    } catch {
+      return null;
+    }
   }, [currentTime, focusSatellite, observer]);
   const passWindowKey = Math.floor(currentTime.getTime() / 60000);
   const upcomingPasses = useMemo(() => {
@@ -301,12 +312,16 @@ export function TrackerPage() {
     }
 
     const passStart = new Date(passWindowKey * 60000);
-    return predictPassesForSatellite(focusSatellite, observer, {
-      start: passStart,
-      end: new Date(passStart.getTime() + 3 * 86400000),
-      minElevationDeg: observer.minElevationDeg,
-      stepSeconds: 45
-    }).slice(0, 4);
+    try {
+      return predictPassesForSatellite(focusSatellite, observer, {
+        start: passStart,
+        end: new Date(passStart.getTime() + 3 * 86400000),
+        minElevationDeg: observer.minElevationDeg,
+        stepSeconds: 45
+      }).slice(0, 4);
+    } catch {
+      return [];
+    }
   }, [focusSatellite, observer, passWindowKey]);
 
   function goLive() {
@@ -419,10 +434,15 @@ export function TrackerPage() {
   }
 
   if (!focusSatellite || !selectedSnapshot || trackedSatellites.length === 0) {
+    const propagationFailed = Boolean(focusSatellite) && (!selectedSnapshot || trackedSatellites.length === 0);
     return (
       <div className="panel p-8">
         <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">Live tracker</h1>
-        <p className="mt-2 text-[var(--muted)]">Add a satellite in Catalog to start live tracking.</p>
+        <p className="mt-2 text-[var(--muted)]">
+          {propagationFailed
+            ? `Could not propagate ${focusSatellite?.name ?? "the selected satellite"}. Its orbital elements may be stale or the object may have decayed - try refreshing the TLE from Details, or select another satellite.`
+            : "Add a satellite in Catalog to start live tracking."}
+        </p>
       </div>
     );
   }
@@ -703,7 +723,7 @@ export function TrackerPage() {
         />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
         {[
           ["Latitude", `${selectedSnapshot.latitudeDeg.toFixed(4)}°`],
           ["Longitude", `${selectedSnapshot.longitudeDeg.toFixed(4)}°`],

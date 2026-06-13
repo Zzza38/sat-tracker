@@ -74,8 +74,10 @@ function getWorker() {
       }
       pendingRequests.clear();
       worker?.terminate();
+      // Leave workerDisabled untouched so a transient failure does not
+      // permanently force the slower main-thread fallback; the worker is
+      // recreated on the next request.
       worker = null;
-      workerDisabled = true;
     };
   }
   return worker;
@@ -95,15 +97,47 @@ function cacheId(records: SatelliteRecord[], observer: ObserverSite, options?: P
   });
 }
 
+const PASS_CACHE_TTL_MS = 10 * 60 * 1000;
+
 async function readCachedPasses(id: string) {
   try {
     const { db } = await import("@/shared/db");
     const cached = await db.passCache.get(id);
-    return cached && Date.now() - new Date(cached.computedAt).getTime() < 10 * 60 * 1000
+    return cached && Date.now() - new Date(cached.computedAt).getTime() < PASS_CACHE_TTL_MS
       ? cached.passes
       : null;
   } catch {
     return null;
+  }
+}
+
+async function writeCachedPasses(
+  id: string,
+  records: SatelliteRecord[],
+  observer: ObserverSite,
+  options: PassPredictOptions,
+  passes: PassPrediction[]
+) {
+  if (!options.start || !options.end) {
+    return;
+  }
+
+  try {
+    const { db } = await import("@/shared/db");
+    // Evict expired entries so the cache does not grow without bound.
+    const cutoff = new Date(Date.now() - PASS_CACHE_TTL_MS).toISOString();
+    await db.passCache.where("computedAt").below(cutoff).delete();
+    await db.passCache.put({
+      id,
+      observerId: observer.id,
+      satelliteId: records.map((record) => record.id).join(","),
+      windowStart: options.start.toISOString(),
+      windowEnd: options.end.toISOString(),
+      computedAt: new Date().toISOString(),
+      passes
+    });
+  } catch {
+    // Cache failures should not hide successful predictions.
   }
 }
 
@@ -188,28 +222,14 @@ export async function predictPassesBulk(
     } catch {
       worker?.terminate();
       worker = null;
-      workerDisabled = true;
       passes = await predictWithoutWorker(records, observer, options);
     }
   } else {
     passes = await predictWithoutWorker(records, observer, options);
   }
 
-  if (id && options?.start && options.end) {
-    try {
-      const { db } = await import("@/shared/db");
-      await db.passCache.put({
-        id,
-        observerId: observer.id,
-        satelliteId: records.map((record) => record.id).join(","),
-        windowStart: options.start.toISOString(),
-        windowEnd: options.end.toISOString(),
-        computedAt: new Date().toISOString(),
-        passes
-      });
-    } catch {
-      // Cache failures should not hide successful predictions.
-    }
+  if (id && options) {
+    await writeCachedPasses(id, records, observer, options, passes);
   }
 
   return passes;
@@ -270,28 +290,14 @@ export async function predictPassesBulkStreaming(
     } catch {
       worker?.terminate();
       worker = null;
-      workerDisabled = true;
       passes = await predictWithoutWorkerStreaming(records, observer, options, onProgress);
     }
   } else {
     passes = await predictWithoutWorkerStreaming(records, observer, options, onProgress);
   }
 
-  if (id && options?.start && options.end) {
-    try {
-      const { db } = await import("@/shared/db");
-      await db.passCache.put({
-        id,
-        observerId: observer.id,
-        satelliteId: records.map((record) => record.id).join(","),
-        windowStart: options.start.toISOString(),
-        windowEnd: options.end.toISOString(),
-        computedAt: new Date().toISOString(),
-        passes
-      });
-    } catch {
-      // Cache failures should not hide successful predictions.
-    }
+  if (id && options) {
+    await writeCachedPasses(id, records, observer, options, passes);
   }
 
   return passes;
