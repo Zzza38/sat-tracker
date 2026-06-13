@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   isValidNotificationRequest,
   isValidSaveFileRequest,
+  isValidWindowDragPoint,
   isWindowControlAction
 } from "./ipc-contract";
 
@@ -12,6 +13,13 @@ const TRUSTED_RENDERER_HOSTS = new Set([
   "desktop-zion",
   "desktop-zion.tail4dd51a.ts.net"
 ]);
+
+const windowDragStarts = new Map<number, {
+  pointerScreenX: number;
+  pointerScreenY: number;
+  windowX: number;
+  windowY: number;
+}>();
 
 function appIconPath() {
   return process.env.ELECTRON_RENDERER_URL
@@ -54,7 +62,7 @@ function createWindow() {
     frame: true,
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: "#101114",
+      color: "#0c0d10",
       symbolColor: "#f4f7fb",
       height: 42
     },
@@ -169,5 +177,53 @@ ipcMain.handle("window-control", (event, action: unknown) => {
   }
 
   window.close();
+  return true;
+});
+
+ipcMain.handle("window-drag-start", (event, point: unknown) => {
+  if (!isTrustedSender(event) || !isValidWindowDragPoint(point)) {
+    return false;
+  }
+
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) {
+    return false;
+  }
+
+  const [windowX, windowY] = window.getPosition();
+  windowDragStarts.set(event.sender.id, {
+    pointerScreenX: point.screenX,
+    pointerScreenY: point.screenY,
+    windowX,
+    windowY
+  });
+  return true;
+});
+
+ipcMain.handle("window-drag-move", (event, point: unknown) => {
+  if (!isTrustedSender(event) || !isValidWindowDragPoint(point)) {
+    return false;
+  }
+
+  const drag = windowDragStarts.get(event.sender.id);
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!drag || !window) {
+    return false;
+  }
+
+  window.setPosition(
+    Math.round(drag.windowX + point.screenX - drag.pointerScreenX),
+    Math.round(drag.windowY + point.screenY - drag.pointerScreenY),
+    false
+  );
+  return true;
+});
+
+ipcMain.handle("window-drag-end", (event) => {
+  if (!isTrustedSender(event)) {
+    return false;
+  }
+
+  windowDragStarts.delete(event.sender.id);
   return true;
 });

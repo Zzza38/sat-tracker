@@ -59,6 +59,8 @@ interface AppContextValue {
   selectedSatelliteId: string | null;
   selectedSatellite?: SatelliteRecord;
   observer: ObserverSite;
+  observers: ObserverSite[];
+  activeObserverId: string;
   settings: Awaited<ReturnType<typeof getSettings>>;
   passes: PassPrediction[];
   selectedPass: PassPrediction | null;
@@ -80,6 +82,7 @@ interface AppContextValue {
   importTleSource: (sourceId: string) => Promise<void>;
   refreshSelectedSatellite: () => Promise<void>;
   toggleWatchlist: (satelliteId: string) => Promise<string[]>;
+  selectObserver: (observerId: string) => Promise<void>;
   updateObserver: (observer: ObserverSite) => Promise<void>;
   updateSettings: (partial: Partial<Awaited<ReturnType<typeof getSettings>>>) => Promise<void>;
   getSatelliteColor: (satelliteId: string, orderedIds: string[]) => string;
@@ -181,6 +184,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     storedUi.selectedSatelliteId ?? null
   );
   const [observer, setObserver] = useState<ObserverSite>(DEFAULT_OBSERVER);
+  const [observers, setObservers] = useState<ObserverSite[]>([]);
   const [settings, setSettings] = useState<Awaited<ReturnType<typeof getSettings>> | null>(null);
   const [passes, setPasses] = useState<PassPrediction[]>([]);
   const [selectedPass, setSelectedPass] = useState<PassPrediction | null>(null);
@@ -235,14 +239,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         shouldRefreshInBackground = true;
       }
 
-      const [activeObserver, nextSettings, watchlist] = await Promise.all([
+      const [activeObserver, nextSettings, watchlist, observerRecords] = await Promise.all([
         getActiveObserver(),
         getSettings(),
-        db.watchlists.get("default")
+        db.watchlists.get("default"),
+        db.observers.toArray()
       ]);
 
       setSatellites(records);
       setObserver(activeObserver);
+      setObservers(observerRecords);
       setSettings(nextSettings);
       setWatchlistIds(watchlist?.satelliteIds ?? []);
 
@@ -341,6 +347,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedSatelliteId,
     selectedSatellite,
     observer,
+    observers,
+    activeObserverId: settings?.activeObserverId ?? observer.id,
     settings: settings ?? {
       id: "app",
       refreshIntervalValue: 12,
@@ -405,10 +413,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setWatchlistIds(ids);
       return ids;
     },
+    selectObserver: async (observerId) => {
+      const nextObserver = await db.observers.get(observerId);
+      if (!nextObserver) {
+        throw new Error("Observer not found.");
+      }
+      await saveSettings({ activeObserverId: observerId });
+      const nextSettings = await getSettings();
+      setSettings(nextSettings);
+      setObserver(nextObserver);
+      setObservers(await db.observers.toArray());
+    },
     updateObserver: async (nextObserver) => {
       await db.observers.put(nextObserver);
       await saveSettings({ activeObserverId: nextObserver.id });
+      const nextSettings = await getSettings();
       setObserver(nextObserver);
+      setSettings(nextSettings);
+      setObservers(await db.observers.toArray());
     },
     updateSettings: async (partial) => {
       await saveSettings(partial);
@@ -433,6 +455,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     catalogSyncing,
     error,
     observer,
+    observers,
     page,
     passes,
     selectedPass,

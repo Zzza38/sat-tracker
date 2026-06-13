@@ -11,9 +11,9 @@ export function ElevationColorLegend({
     <div className="flex items-center gap-3 text-xs text-[var(--muted)]">
       <span className="mono">{minElevationDeg.toFixed(0)}°</span>
       <div
-        className="h-2 flex-1 rounded-full border border-[var(--line)]"
+        className="h-2 flex-1 overflow-hidden rounded-full bg-[#e86240]"
         style={{
-          background: `linear-gradient(to right, hsl(12 78% 58%), hsl(140 78% 58%))`
+          backgroundImage: "linear-gradient(90deg, #e86240 0%, #e86240 7%, #e9a847 45%, #43d982 100%)"
         }}
         aria-hidden="true"
       />

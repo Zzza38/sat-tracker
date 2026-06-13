@@ -4,6 +4,20 @@ export function isWindowControlAction(value: unknown): value is "minimize" | "ma
   return value === "minimize" || value === "maximize" || value === "close";
 }
 
+export function isValidWindowDragPoint(value: unknown): value is { screenX: number; screenY: number } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const point = value as { screenX?: unknown; screenY?: unknown };
+  return (
+    typeof point.screenX === "number" &&
+    typeof point.screenY === "number" &&
+    Number.isFinite(point.screenX) &&
+    Number.isFinite(point.screenY)
+  );
+}
+
 export function isValidSaveFileRequest(content: unknown, defaultName: unknown) {
   return (
     typeof content === "string" &&

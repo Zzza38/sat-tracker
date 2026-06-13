@@ -2,12 +2,10 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { ElectronTitlebar } from "./ElectronTitlebar";
 import { NavRail } from "./NavRail";
-import { isElectronRuntime } from "../lib/platform";
 
 const COMPACT_NAV_QUERY = "(max-width: 767px) and (max-aspect-ratio: 4 / 3)";
 
 export function Layout({ children }: { children: ReactNode }) {
-  const isElectron = isElectronRuntime();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const mobileNavRef = useRef<HTMLDivElement | null>(null);
 
@@ -66,7 +64,7 @@ export function Layout({ children }: { children: ReactNode }) {
   }, [mobileNavOpen]);
 
   return (
-    <div className={`min-h-screen${isElectron ? " electron-shell" : ""}`}>
+    <div className="app-shell min-h-screen">
       <ElectronTitlebar />
       <div className="mx-auto flex min-h-screen max-w-[1600px] gap-6 p-3 sm:p-4 md:p-6">
         <div className="desktop-nav">
@@ -93,21 +91,19 @@ export function Layout({ children }: { children: ReactNode }) {
             />
             <div
               ref={mobileNavRef}
-              className="mobile-nav-panel absolute bottom-0 left-0 top-0 w-[min(82vw,280px)] border-r border-[var(--line-strong)] bg-[var(--bg)] p-4 shadow-2xl"
+              className="mobile-nav-panel absolute bottom-0 left-0 top-0 w-[min(82vw,280px)] border-r border-[var(--line-strong)] bg-[var(--bg)] p-4 pt-5 shadow-2xl"
               role="dialog"
               aria-modal="true"
               aria-label="Navigation"
             >
-              <div className="mb-3 flex justify-end">
-                <button
-                  type="button"
-                  className="mobile-menu-button mobile-menu-button-inline"
-                  aria-label="Close navigation"
-                  onClick={() => setMobileNavOpen(false)}
-                >
-                  <X size={18} />
-                </button>
-              </div>
+              <button
+                type="button"
+                className="mobile-menu-button mobile-menu-button-inline mobile-nav-close"
+                aria-label="Close navigation"
+                onClick={() => setMobileNavOpen(false)}
+              >
+                <X size={18} />
+              </button>
               <NavRail onNavigate={() => setMobileNavOpen(false)} />
             </div>
           </div>

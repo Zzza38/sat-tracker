@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isValidNotificationRequest,
   isValidSaveFileRequest,
+  isValidWindowDragPoint,
   isWindowControlAction,
   MAX_SAVE_FILE_CONTENT_LENGTH
 } from "../ipc-contract";
@@ -22,5 +23,11 @@ describe("IPC contract", () => {
   it("bounds notification fields", () => {
     expect(isValidNotificationRequest("Pass", "Starting soon")).toBe(true);
     expect(isValidNotificationRequest("x".repeat(201), "Starting soon")).toBe(false);
+  });
+
+  it("accepts finite window drag points", () => {
+    expect(isValidWindowDragPoint({ screenX: 12, screenY: 34 })).toBe(true);
+    expect(isValidWindowDragPoint({ screenX: Number.NaN, screenY: 34 })).toBe(false);
+    expect(isValidWindowDragPoint({ screenX: 12 })).toBe(false);
   });
 });

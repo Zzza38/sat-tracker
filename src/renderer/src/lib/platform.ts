@@ -1,7 +1,7 @@
 export function isElectronRuntime() {
-  // Only trust the preload bridge: user-agent sniffing misfires inside other
-  // Electron-embedded browsers, which would render the desktop titlebar on the web app.
-  return Boolean(window.electronAPI?.isElectron);
+  // Prefer the preload bridge, but keep a user-agent fallback so the custom
+  // titlebar still renders if the bridge is delayed or unavailable.
+  return Boolean(window.electronAPI?.isElectron || navigator.userAgent.includes("Electron"));
 }
 
 export async function saveTextFile(content: string, defaultName: string) {

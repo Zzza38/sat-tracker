@@ -136,11 +136,11 @@ select {
   -webkit-app-region: no-drag;
 }
 
-.electron-shell {
+.app-shell {
   padding-top: 42px;
 }
 
-.electron-shell > .mx-auto {
+.app-shell > .mx-auto {
   min-height: calc(100vh - 42px);
 }
 
@@ -149,15 +149,19 @@ select {
   inset: 0 0 auto 0;
   z-index: 10000;
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto minmax(140px, 1fr);
+  grid-template-columns: minmax(180px, 1fr) auto minmax(138px, 1fr);
   height: 42px;
   align-items: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-  background: #101114;
+  background: #0c0d10;
   color: var(--text);
   user-select: none;
   app-region: drag;
   -webkit-app-region: drag;
+}
+
+.electron-titlebar[data-electron="true"] {
+  padding-right: 138px;
 }
 
 .electron-titlebar-brand,
@@ -165,6 +169,8 @@ select {
   display: flex;
   min-width: 0;
   align-items: center;
+  app-region: drag;
+  -webkit-app-region: drag;
 }
 
 .electron-titlebar-brand {
@@ -196,6 +202,12 @@ select {
   position: relative;
   width: max-content;
   max-width: min(34vw, 280px);
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.electron-titlebar-satellite,
+.electron-titlebar-satellite * {
   app-region: no-drag;
   -webkit-app-region: no-drag;
 }
@@ -639,6 +651,13 @@ button.mobile-menu-button-inline:not([data-slot]) {
   display: inline-grid;
 }
 
+button.mobile-nav-close:not([data-slot]) {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  left: auto;
+}
+
 button.mobile-nav-backdrop:not([data-slot]) {
   position: absolute;
   inset: 0;
@@ -661,6 +680,10 @@ button.mobile-nav-backdrop:not([data-slot]):hover {
 
 .mobile-nav-panel {
   z-index: 1;
+}
+
+.mobile-nav-panel aside {
+  padding-right: 3.25rem;
 }
 
 button.radar-target-row:not([data-slot]) {
@@ -1000,9 +1023,9 @@ tbody tr:hover td {
   }
 
   .electron-titlebar-brand {
-    justify-content: center;
-    padding-left: 0;
-    padding-right: 0;
+    min-width: 0;
+    padding-left: 0.75rem;
+    padding-right: 0.5rem;
   }
 
   .electron-titlebar-center {
@@ -1021,12 +1044,27 @@ tbody tr:hover td {
     display: inline-grid;
   }
 
-  .electron-shell button.mobile-menu-button:not([data-slot]) {
+  .app-shell button.mobile-menu-button:not([data-slot]) {
     top: calc(42px + 0.75rem + env(safe-area-inset-top));
+  }
+
+  .app-shell button.mobile-nav-close:not([data-slot]) {
+    top: 0.75rem;
+    right: 0.75rem;
+    left: auto;
   }
 
   .mobile-nav-overlay {
     display: block;
+  }
+
+  .app-shell .mobile-nav-overlay {
+    top: 42px;
+    height: calc(100vh - 42px);
+  }
+
+  .app-shell .mobile-nav-panel {
+    top: 0;
   }
 
   .panel,

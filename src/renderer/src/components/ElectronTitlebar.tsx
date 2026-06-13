@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Check, ChevronDown, Satellite } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { isElectronRuntime } from "../lib/platform";
@@ -15,8 +15,10 @@ const APP_ICON_ASSET_URL = `${import.meta.env.BASE_URL}sat-tracker-icon.svg`;
 
 export function ElectronTitlebar() {
   const { page, satellites, watchlistIds, selectedSatelliteId, selectSatellite } = useApp();
+  const isElectron = isElectronRuntime();
   const [satelliteMenuOpen, setSatelliteMenuOpen] = useState(false);
   const satelliteMenuRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef<{ pointerId: number } | null>(null);
   const trackedSatellites = useMemo(() => {
     const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
     return watchlistIds.flatMap((id) => {
@@ -50,12 +52,55 @@ export function ElectronTitlebar() {
     };
   }, [satelliteMenuOpen]);
 
-  if (!isElectronRuntime()) {
-    return null;
+  function isInteractiveDragTarget(target: EventTarget | null) {
+    return target instanceof Element && Boolean(target.closest("button, a, input, select, textarea, [role='button'], [data-window-no-drag]"));
+  }
+
+  function handleTitlebarPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || isInteractiveDragTarget(event.target)) {
+      return;
+    }
+
+    draggingRef.current = { pointerId: event.pointerId };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    void window.electronAPI?.windowDragStart({
+      screenX: event.screenX,
+      screenY: event.screenY
+    });
+  }
+
+  function handleTitlebarPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (draggingRef.current?.pointerId !== event.pointerId) {
+      return;
+    }
+
+    void window.electronAPI?.windowDragMove({
+      screenX: event.screenX,
+      screenY: event.screenY
+    });
+  }
+
+  function handleTitlebarPointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    if (draggingRef.current?.pointerId !== event.pointerId) {
+      return;
+    }
+
+    draggingRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    void window.electronAPI?.windowDragEnd();
   }
 
   return (
-    <div className="electron-titlebar">
+    <div
+      className="electron-titlebar"
+      data-electron={isElectron ? "true" : "false"}
+      onPointerDown={handleTitlebarPointerDown}
+      onPointerMove={handleTitlebarPointerMove}
+      onPointerUp={handleTitlebarPointerEnd}
+      onPointerCancel={handleTitlebarPointerEnd}
+    >
       <div className="electron-titlebar-brand">
         <img className="electron-titlebar-icon" src={APP_ICON_ASSET_URL} alt="" />
         <span className="electron-titlebar-name">Sat Tracker</span>
@@ -63,7 +108,7 @@ export function ElectronTitlebar() {
 
       <div className="electron-titlebar-center">
         <span className="electron-titlebar-page">{pageLabels[page]}</span>
-        <div ref={satelliteMenuRef} className="electron-titlebar-satellite">
+        <div ref={satelliteMenuRef} className="electron-titlebar-satellite" data-window-no-drag>
           <button
             type="button"
             className="electron-titlebar-satellite-trigger"

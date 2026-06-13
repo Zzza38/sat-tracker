@@ -11,6 +11,9 @@ declare global {
       saveFile: (content: string, defaultName: string) => Promise<boolean>;
       showNotification: (title: string, body: string) => Promise<boolean>;
       windowControl: (action: "minimize" | "maximize" | "close") => Promise<boolean>;
+      windowDragStart: (point: { screenX: number; screenY: number }) => Promise<boolean>;
+      windowDragMove: (point: { screenX: number; screenY: number }) => Promise<boolean>;
+      windowDragEnd: () => Promise<boolean>;
     };
   }
 }

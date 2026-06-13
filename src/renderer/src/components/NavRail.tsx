@@ -10,8 +10,6 @@ const items = [
   { id: "settings", label: "Settings", icon: Settings2 }
 ] as const;
 
-const APP_ICON_ASSET_URL = `${import.meta.env.BASE_URL}sat-tracker-icon.svg`;
-
 interface NavRailProps {
   onNavigate?: () => void;
 }
@@ -21,12 +19,6 @@ export function NavRail({ onNavigate }: NavRailProps) {
 
   return (
     <aside className="flex w-52 shrink-0 flex-col gap-1">
-      <div className="mb-5 flex items-center gap-2.5 px-3 pt-1">
-        <img className="h-8 w-8 rounded-lg" src={APP_ICON_ASSET_URL} alt="" />
-        <div>
-          <div className="text-sm font-semibold leading-tight text-[var(--text)]">Sat Tracker</div>
-        </div>
-      </div>
       {items.map((item) => {
         const Icon = item.icon;
         const active = page === item.id;

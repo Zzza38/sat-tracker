@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createUrlTleSource,
   refreshIntervalToHours,
@@ -26,9 +26,100 @@ function clampMinimumElevation(value: number) {
   return Math.min(90, Math.max(0, value));
 }
 
+const CITY_PRESETS = [
+  { id: "new-york", name: "New York, NY", latitude: 40.7128, longitude: -74.006, altitudeM: 10 },
+  { id: "los-angeles", name: "Los Angeles, CA", latitude: 34.0522, longitude: -118.2437, altitudeM: 89 },
+  { id: "chicago", name: "Chicago, IL", latitude: 41.8781, longitude: -87.6298, altitudeM: 181 },
+  { id: "houston", name: "Houston, TX", latitude: 29.7604, longitude: -95.3698, altitudeM: 13 },
+  { id: "phoenix", name: "Phoenix, AZ", latitude: 33.4484, longitude: -112.074, altitudeM: 331 },
+  { id: "philadelphia", name: "Philadelphia, PA", latitude: 39.9526, longitude: -75.1652, altitudeM: 12 },
+  { id: "san-antonio", name: "San Antonio, TX", latitude: 29.4241, longitude: -98.4936, altitudeM: 198 },
+  { id: "san-diego", name: "San Diego, CA", latitude: 32.7157, longitude: -117.1611, altitudeM: 19 },
+  { id: "dallas", name: "Dallas, TX", latitude: 32.7767, longitude: -96.797, altitudeM: 131 },
+  { id: "san-jose", name: "San Jose, CA", latitude: 37.3382, longitude: -121.8863, altitudeM: 26 },
+  { id: "seattle", name: "Seattle, WA", latitude: 47.6062, longitude: -122.3321, altitudeM: 52 },
+  { id: "denver", name: "Denver, CO", latitude: 39.7392, longitude: -104.9903, altitudeM: 1609 },
+  { id: "miami", name: "Miami, FL", latitude: 25.7617, longitude: -80.1918, altitudeM: 2 },
+  { id: "washington-dc", name: "Washington, DC", latitude: 38.9072, longitude: -77.0369, altitudeM: 7 },
+  { id: "london", name: "London, UK", latitude: 51.5074, longitude: -0.1278, altitudeM: 10 },
+  { id: "paris", name: "Paris, France", latitude: 48.8566, longitude: 2.3522, altitudeM: 35 },
+  { id: "tokyo", name: "Tokyo, Japan", latitude: 35.6762, longitude: 139.6503, altitudeM: 40 },
+  { id: "sydney", name: "Sydney, Australia", latitude: -33.8688, longitude: 151.2093, altitudeM: 58 },
+  { id: "toronto", name: "Toronto, Canada", latitude: 43.6532, longitude: -79.3832, altitudeM: 76 },
+  { id: "mexico-city", name: "Mexico City, Mexico", latitude: 19.4326, longitude: -99.1332, altitudeM: 2240 }
+] as const;
+
+type ObserverDraft = {
+  id: string;
+  name: string;
+  latitude: string;
+  longitude: string;
+  altitudeM: string;
+  minElevationDeg: number;
+};
+
+function observerToDraft(observer: {
+  id?: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  altitudeM: number;
+  minElevationDeg?: number;
+}): ObserverDraft {
+  return {
+    id: observer.id ?? `observer-${Date.now()}`,
+    name: observer.name,
+    latitude: String(observer.latitude),
+    longitude: String(observer.longitude),
+    altitudeM: String(observer.altitudeM),
+    minElevationDeg: clampMinimumElevation(observer.minElevationDeg ?? 10)
+  };
+}
+
+function parseObserverDraft(draft: ObserverDraft) {
+  const latitude = Number(draft.latitude);
+  const longitude = Number(draft.longitude);
+  const altitudeM = Number(draft.altitudeM);
+  const errors: string[] = [];
+
+  if (draft.name.trim().length === 0) {
+    errors.push("Name is required.");
+  }
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+    errors.push("Latitude must be between -90 and 90.");
+  }
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    errors.push("Longitude must be between -180 and 180.");
+  }
+  if (!Number.isFinite(altitudeM)) {
+    errors.push("Altitude must be a number.");
+  }
+
+  return {
+    errors,
+    observer: {
+      id: draft.id,
+      name: draft.name.trim(),
+      latitude,
+      longitude,
+      altitudeM,
+      minElevationDeg: clampMinimumElevation(draft.minElevationDeg)
+    }
+  };
+}
+
 export function SettingsPage() {
-  const { observer, settings, updateObserver, updateSettings, refreshCatalog } = useApp();
-  const [draft, setDraft] = useState(observer);
+  const {
+    observer,
+    observers,
+    activeObserverId,
+    settings,
+    selectObserver,
+    updateObserver,
+    updateSettings,
+    refreshCatalog
+  } = useApp();
+  const [draft, setDraft] = useState<ObserverDraft>(() => observerToDraft(observer));
   const [saved, setSaved] = useState<string | null>(null);
   const [savedIsError, setSavedIsError] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -40,12 +131,35 @@ export function SettingsPage() {
   const [sourceUrls, setSourceUrls] = useState(() =>
     settings.tleSources.map((source) => tleSourceUrl(source)).join("\n")
   );
+  const observerValidation = useMemo(() => parseObserverDraft(draft), [draft]);
 
   useEffect(() => {
     if (!observerDirtyRef.current) {
-      setDraft(observer);
+      setDraft(observerToDraft(observer));
     }
   }, [observer]);
+
+  useEffect(() => {
+    if (!observerDirtyRef.current) {
+      return;
+    }
+
+    if (observerValidation.errors.length > 0) {
+      setSavedIsError(true);
+      setSaved(observerValidation.errors[0]);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void updateObserver(observerValidation.observer).then(() => {
+        observerDirtyRef.current = false;
+        setSavedIsError(false);
+        setSaved("Observer saved.");
+      });
+    }, 450);
+
+    return () => window.clearTimeout(timeout);
+  }, [observerValidation, updateObserver]);
 
   useEffect(() => {
     if (!sourceUrlsDirtyRef.current) {
@@ -58,32 +172,46 @@ export function SettingsPage() {
   }, [settings.refreshIntervalValue]);
 
   async function save() {
-    const valid =
-      draft.name.trim().length > 0 &&
-      Number.isFinite(draft.latitude) &&
-      draft.latitude >= -90 &&
-      draft.latitude <= 90 &&
-      Number.isFinite(draft.longitude) &&
-      draft.longitude >= -180 &&
-      draft.longitude <= 180 &&
-      Number.isFinite(draft.altitudeM) &&
-      Number.isFinite(draft.minElevationDeg) &&
-      draft.minElevationDeg >= 0 &&
-      draft.minElevationDeg <= 90;
-    if (!valid) {
+    if (observerValidation.errors.length > 0) {
       setSavedIsError(true);
-      setSaved("Enter valid observer coordinates and a 0-90° elevation mask.");
+      setSaved(observerValidation.errors[0]);
       return;
     }
 
-    await updateObserver({
-      ...draft,
-      name: draft.name.trim(),
-      minElevationDeg: clampMinimumElevation(draft.minElevationDeg)
-    });
+    await updateObserver(observerValidation.observer);
     observerDirtyRef.current = false;
     setSavedIsError(false);
     setSaved("Observer saved.");
+  }
+
+  async function chooseCityPreset(presetId: string) {
+    const preset = CITY_PRESETS.find((city) => city.id === presetId);
+    if (!preset) {
+      return;
+    }
+
+    observerDirtyRef.current = false;
+    const nextObserver = {
+      ...preset,
+      minElevationDeg: draft.minElevationDeg
+    };
+    setDraft(observerToDraft(nextObserver));
+    await updateObserver(nextObserver);
+    setSavedIsError(false);
+    setSaved(`Observer set to ${preset.name}.`);
+  }
+
+  async function createObserver() {
+    const nextObserver = {
+      ...observer,
+      id: `observer-${Date.now().toString(36)}`,
+      name: "New observer"
+    };
+    observerDirtyRef.current = false;
+    setDraft(observerToDraft(nextObserver));
+    await updateObserver(nextObserver);
+    setSavedIsError(false);
+    setSaved("New observer created.");
   }
 
   async function updateTleSources(nextSources: TleSource[]) {
@@ -169,6 +297,50 @@ export function SettingsPage() {
         <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-[var(--text)]">Observer settings</h1>
 
         <div className="mt-6 space-y-4">
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-[var(--faint)]">Active observer</span>
+              <Select
+                value={activeObserverId}
+                onValueChange={(observerId) => {
+                  observerDirtyRef.current = false;
+                  setSaved(null);
+                  void selectObserver(observerId);
+                }}
+              >
+                <SelectTrigger className="h-[42px] w-full border-[var(--line-strong)] bg-[var(--bg)]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {observers.map((entry) => (
+                    <SelectItem key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <Button className="self-end" variant="secondary" onClick={() => void createObserver()}>
+              New
+            </Button>
+          </div>
+
+          <label className="block space-y-1.5">
+            <span className="text-xs font-medium text-[var(--faint)]">City or town preset</span>
+            <Select onValueChange={(presetId) => void chooseCityPreset(presetId)}>
+              <SelectTrigger className="h-[42px] border-[var(--line-strong)] bg-[var(--bg)]">
+                <SelectValue placeholder="Choose a preset..." />
+              </SelectTrigger>
+              <SelectContent>
+                {CITY_PRESETS.map((city) => (
+                  <SelectItem key={city.id} value={city.id}>
+                    {city.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+
           {[
             ["name", "Site name"],
             ["latitude", "Latitude"],
@@ -179,17 +351,15 @@ export function SettingsPage() {
               <span className="text-xs font-medium text-[var(--faint)]">{label}</span>
               <input
                 type={key === "name" ? "text" : "number"}
-                value={String(draft[key as keyof typeof draft] ?? "")}
+                value={draft[key as keyof ObserverDraft] as string}
                 onChange={(event) =>
                   {
                     observerDirtyRef.current = true;
-                    const value = key === "name" ? event.target.value : event.target.valueAsNumber;
-                    if (key === "name" || Number.isFinite(value)) {
-                      setDraft({
-                        ...draft,
-                        [key]: value
-                      });
-                    }
+                    setSaved(null);
+                    setDraft({
+                      ...draft,
+                      [key]: event.target.value
+                    });
                   }
                 }
               />
@@ -210,6 +380,7 @@ export function SettingsPage() {
                 aria-label="Minimum elevation"
                 onValueChange={([value]) => {
                   observerDirtyRef.current = true;
+                  setSaved(null);
                   setDraft((current) => ({
                     ...current,
                     minElevationDeg: clampMinimumElevation(value ?? 0)
@@ -237,9 +408,9 @@ export function SettingsPage() {
                 setSaved(null);
                 setDraft((current) => ({
                   ...current,
-                  latitude: position.coords.latitude,
-                  longitude: position.coords.longitude,
-                  altitudeM: position.coords.altitude ?? current.altitudeM
+                  latitude: String(position.coords.latitude),
+                  longitude: String(position.coords.longitude),
+                  altitudeM: String(position.coords.altitude ?? current.altitudeM)
                 }));
               }, (error) => {
                 setSavedIsError(true);
