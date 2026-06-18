@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import { Layout } from "./components/Layout";
 import { useApp } from "./context/AppContext";
 
@@ -40,6 +41,7 @@ export default function App() {
           {content}
         </Suspense>
       )}
+      <Analytics />
     </Layout>
   );
 }
