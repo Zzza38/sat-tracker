@@ -81,8 +81,8 @@ export function DetailsPage() {
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
-      <section className="panel p-5">
+    <div className="grid min-w-0 gap-6 xl:grid-cols-[1fr_0.9fr]">
+      <section className="panel min-w-0 p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="label">Object details</p>
@@ -105,7 +105,7 @@ export function DetailsPage() {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 md:grid-cols-4">
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
           {[
             ["Inclination", `${metrics.inclinationDeg.toFixed(2)}°`],
             ["Period", `${metrics.periodMin.toFixed(1)} min`],
@@ -116,9 +116,9 @@ export function DetailsPage() {
             ["Look Azimuth", `${snapshot.azimuthDeg.toFixed(1)}°`],
             ["Range", `${snapshot.rangeKm.toFixed(1)} km`]
           ].map(([label, value]) => (
-            <div key={label} className="panel-strong p-4">
+            <div key={label} className="panel-strong p-3 sm:p-4">
               <div className="text-xs font-medium text-[var(--faint)]">{label}</div>
-              <div className="mono mt-1.5 text-lg text-[var(--text)]">{value}</div>
+              <div className="mono mt-1.5 text-base text-[var(--text)] sm:text-lg">{value}</div>
             </div>
           ))}
         </div>
@@ -133,7 +133,7 @@ export function DetailsPage() {
         </div>
       </section>
 
-      <section className="panel p-5">
+      <section className="panel min-w-0 p-4 sm:p-5">
         <p className="label">Upcoming passes</p>
         <div className="mt-4 space-y-3">
           {upcoming.map((pass) => (

@@ -170,18 +170,18 @@ export function PassesPage() {
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-      <section className="panel p-5">
+    <div className="grid min-w-0 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+      <section className="panel min-w-0 p-4 sm:p-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
+          <div className="min-w-0">
             <p className="label">Pass predictor</p>
             <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">Ground station passes</h1>
             <p className="mt-1.5 text-sm text-[var(--muted)]">
               Observer {observer.name} · min elevation {observer.minElevationDeg}°
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="grid w-[260px] grid-cols-[1fr_58px] items-center gap-3 rounded-md border border-[var(--line-strong)] bg-[var(--bg)] px-3 py-2">
+          <div className="flex w-full flex-wrap items-center gap-3 xl:w-auto">
+            <div className="grid w-full grid-cols-[1fr_58px] items-center gap-3 rounded-md border border-[var(--line-strong)] bg-[var(--bg)] px-3 py-2 sm:w-[260px]">
               <Slider
                 min={1}
                 max={14}
@@ -192,21 +192,30 @@ export function PassesPage() {
               />
               <span className="mono text-right text-xs text-[var(--text)]">{days}d</span>
             </div>
-            <Button disabled={loading} onClick={() => void computePasses()}>{loading ? "Computing..." : "Compute Passes"}</Button>
-            <Button
-              variant="secondary"
-              onClick={() => void exportFile(passesToCsv(passes), "passes.csv")}
-              disabled={passes.length === 0}
-            >
-              Export CSV
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => void exportFile(passesToIcs(passes, observer.name), "passes.ics")}
-              disabled={passes.length === 0}
-            >
-              Export ICS
-            </Button>
+            <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-3">
+              <Button disabled={loading} onClick={() => void computePasses()}>
+                {loading ? "Computing..." : (
+                  <>
+                    <span className="sm:hidden">Compute</span>
+                    <span className="hidden sm:inline">Compute Passes</span>
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void exportFile(passesToCsv(passes), "passes.csv")}
+                disabled={passes.length === 0}
+              >
+                Export CSV
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void exportFile(passesToIcs(passes, observer.name), "passes.ics")}
+                disabled={passes.length === 0}
+              >
+                Export ICS
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -236,7 +245,53 @@ export function PassesPage() {
           ) : null}
         </div>
 
-        <div className="passes-table mt-5 overflow-auto">
+        <div className="passes-list mt-5 space-y-2 sm:hidden">
+          {passes.map((pass) => {
+            const selected =
+              selectedPass?.satelliteId === pass.satelliteId && selectedPass.aos === pass.aos;
+            return (
+              <button
+                key={`${pass.satelliteId}-${pass.aos}`}
+                type="button"
+                className={clsx("pass-card", selected && "selected")}
+                onClick={() => inspectPass(pass)}
+              >
+                <span className="flex min-w-0 items-center justify-between gap-3">
+                  <span className="flex min-w-0 items-center gap-2 font-medium text-[var(--text)]">
+                    <span
+                      className="size-2.5 shrink-0 rounded-full border border-[rgba(255,255,255,0.35)]"
+                      style={{ backgroundColor: getSatelliteColor(pass.satelliteId, visibleSatelliteIds) }}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{pass.satelliteName}</span>
+                  </span>
+                  <span
+                    className="mono shrink-0 text-sm font-medium"
+                    style={
+                      colorByElevation
+                        ? { color: elevationToColor(pass.maxElevationDeg, elevationColorOptions) }
+                        : undefined
+                    }
+                  >
+                    {pass.maxElevationDeg.toFixed(1)}°
+                  </span>
+                </span>
+                <span className="mono mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--muted)]">
+                  <span>AOS {formatTimestamp(pass.aos)}</span>
+                  <span>{formatDuration(pass.durationSec)}</span>
+                  <span>{pass.illuminated ? "Sunlit" : "In shadow"}</span>
+                </span>
+              </button>
+            );
+          })}
+          {!loading && passes.length === 0 ? (
+            <p className="py-8 text-center text-sm text-[var(--muted)]">
+              No passes found for the selected satellites and time window.
+            </p>
+          ) : null}
+        </div>
+
+        <div className="passes-table mt-5 hidden overflow-auto sm:block">
           <table>
             <thead>
               <tr>
@@ -309,7 +364,7 @@ export function PassesPage() {
         </div>
       </section>
 
-      <section ref={geometryRef} className="panel scroll-mt-4 p-5">
+      <section ref={geometryRef} className="panel min-w-0 scroll-mt-4 p-4 sm:p-5">
         <p className="label">Pass geometry</p>
         {selectedPass ? (
           <div className="mt-4 space-y-5">

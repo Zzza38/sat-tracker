@@ -111,7 +111,7 @@ export function CatalogPage() {
   }
 
   return (
-    <section className="panel p-5">
+    <section className="panel min-w-0 p-4 sm:p-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="label">Catalog</p>
@@ -217,9 +217,50 @@ export function CatalogPage() {
         </p>
       ) : null}
 
+      <div className="catalog-list mt-5 space-y-2 sm:hidden">
+        {filtered.length === 0 ? (
+          <p className="py-8 text-center text-sm text-[var(--muted)]">
+            {catalogSyncing
+              ? "Fetching configured TLE sources. The catalog will populate as soon as the first import finishes."
+              : "No satellites yet. Add one above or import a group from Settings."}
+          </p>
+        ) : (
+          visibleRecords.map((record) => {
+            const tracked = watchlistIds.includes(record.id);
+            return (
+              <div
+                key={record.id}
+                className={`flex items-center justify-between gap-3 rounded-[10px] border border-[var(--line)] p-3 ${
+                  tracked ? "bg-[var(--surface-2)]" : "bg-transparent"
+                }`}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-[var(--text)]">{record.name}</p>
+                  <p className="mono mt-1 text-xs text-[var(--muted)]">
+                    {record.noradId} · {formatRelativeAge(record.fetchedAt)}
+                  </p>
+                  <div className="mt-1.5">
+                    <TleFreshnessBadge satellite={record} />
+                  </div>
+                </div>
+                <Button
+                  className="w-[92px] shrink-0"
+                  variant={tracked ? "default" : "secondary"}
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void toggleTracking(record.id)}
+                >
+                  {tracked ? "Tracking" : "Track"}
+                </Button>
+              </div>
+            );
+          })
+        )}
+      </div>
+
       <div
         ref={tableViewportRef}
-        className="catalog-table mt-5 overflow-auto"
+        className="catalog-table mt-5 hidden overflow-auto sm:block"
         onScroll={handleTableScroll}
       >
         <table>
