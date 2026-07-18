@@ -625,65 +625,48 @@ button.nav-item.active:not([data-slot]) {
   }
 }
 
-button.mobile-menu-button:not([data-slot]) {
+/* Bottom tab bar: primary navigation on small screens. */
+.mobile-tab-bar {
   position: fixed;
-  top: calc(0.75rem + env(safe-area-inset-top));
-  left: calc(0.75rem + env(safe-area-inset-left));
-  z-index: 8000;
+  inset: auto 0 0 0;
+  z-index: 9000;
   display: none;
-  width: 2.35rem;
-  height: 2.35rem;
-  place-items: center;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: rgba(21, 22, 25, 0.92);
-  color: var(--text);
-  padding: 0;
-  backdrop-filter: blur(10px);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border-top: 1px solid var(--line-strong);
+  background: rgba(12, 13, 16, 0.92);
+  padding: 0.3rem 0.4rem calc(0.3rem + env(safe-area-inset-bottom));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
-button.mobile-menu-button:not([data-slot]):hover {
-  background: var(--surface-hover);
-}
-
-button.mobile-menu-button-inline:not([data-slot]) {
-  position: static;
-  display: inline-grid;
-}
-
-button.mobile-nav-close:not([data-slot]) {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  left: auto;
-}
-
-button.mobile-nav-backdrop:not([data-slot]) {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  width: 100%;
-  height: 100%;
+button.mobile-tab-item:not([data-slot]) {
+  display: flex;
+  min-height: 3.1rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.22rem;
   border: 0;
-  border-radius: 0;
-  background: rgba(0, 0, 0, 0.55);
-  padding: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.3rem 0.2rem;
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  -webkit-tap-highlight-color: transparent;
 }
 
-button.mobile-nav-backdrop:not([data-slot]):hover {
-  background: rgba(0, 0, 0, 0.55);
+button.mobile-tab-item:not([data-slot]):hover {
+  background: transparent;
 }
 
-.mobile-nav-overlay {
-  display: none;
+button.mobile-tab-item.active:not([data-slot]) {
+  color: var(--accent);
 }
 
-.mobile-nav-panel {
-  z-index: 1;
-}
-
-.mobile-nav-panel aside {
-  padding-right: 3.25rem;
+button.mobile-tab-item:not([data-slot]) svg {
+  flex: 0 0 auto;
 }
 
 button.radar-target-row:not([data-slot]) {
@@ -918,6 +901,29 @@ button.radar-target-row:not([data-slot]):hover {
   box-shadow: 0 0 0 1px var(--line-strong);
 }
 
+/* Tappable pass summary rows used instead of the table on phones. */
+button.pass-card:not([data-slot]) {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 0.7rem 0.8rem;
+  font-weight: 400;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button.pass-card:not([data-slot]):hover {
+  background: var(--surface-hover);
+}
+
+button.pass-card.selected:not([data-slot]) {
+  border-color: rgba(108, 140, 255, 0.5);
+  background: var(--accent-soft);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -1036,35 +1042,13 @@ tbody tr:hover td {
     display: none;
   }
 
-  .main-shell {
-    padding-block: 3rem 0.25rem;
+  .mobile-tab-bar {
+    display: grid;
   }
 
-  button.mobile-menu-button:not([data-slot]) {
-    display: inline-grid;
-  }
-
-  .app-shell button.mobile-menu-button:not([data-slot]) {
-    top: calc(42px + 0.75rem + env(safe-area-inset-top));
-  }
-
-  .app-shell button.mobile-nav-close:not([data-slot]) {
-    top: 0.75rem;
-    right: 0.75rem;
-    left: auto;
-  }
-
-  .mobile-nav-overlay {
-    display: block;
-  }
-
-  .app-shell .mobile-nav-overlay {
-    top: 42px;
-    height: calc(100vh - 42px);
-  }
-
-  .app-shell .mobile-nav-panel {
-    top: 0;
+  /* Reserve space so page content never hides behind the fixed tab bar. */
+  .app-content {
+    padding-bottom: calc(4.4rem + env(safe-area-inset-bottom));
   }
 
   .panel,

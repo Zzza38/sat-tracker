@@ -660,8 +660,8 @@ export function TrackerPage() {
         />
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <section ref={dataPanelRef} className="panel scroll-mt-16 p-5 md:scroll-mt-4">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <section ref={dataPanelRef} className="panel min-w-0 scroll-mt-16 p-4 sm:p-5 md:scroll-mt-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="label">Selected satellite</p>
@@ -723,7 +723,7 @@ export function TrackerPage() {
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3">
         {[
           ["Latitude", `${selectedSnapshot.latitudeDeg.toFixed(4)}°`],
           ["Longitude", `${selectedSnapshot.longitudeDeg.toFixed(4)}°`],
@@ -735,9 +735,9 @@ export function TrackerPage() {
           ["Footprint", selectedTrackedSatellite ? `${(Math.acos(6371 / (6371 + selectedTrackedSatellite.altitudeKm)) * 6371).toFixed(0)} km` : "n/a"],
           ["Sunlit", selectedSnapshot.sunlit ? "Yes" : "No"]
         ].map(([label, value]) => (
-          <div key={label} className="panel-strong p-4">
+          <div key={label} className="panel-strong p-3 sm:p-4">
             <div className="text-xs font-medium text-[var(--faint)]">{label}</div>
-            <div className="mono mt-1.5 text-xl text-[var(--text)]">{value}</div>
+            <div className="mono mt-1.5 text-base text-[var(--text)] sm:text-xl">{value}</div>
           </div>
         ))}
       </div>
