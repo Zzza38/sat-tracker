@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
 import { Maximize2, Minimize2, Minus, Plus, RotateCcw } from "lucide-react";
 import { getMoonSubpoint, getSunSubpoint } from "@/shared/astro/lighting";
 import { GroundTrackPoint } from "@/shared/types";
 import { Button } from "./ui/button";
 import {
   MAX_ZOOM,
-  MIN_ZOOM,
   clientDeltaToViewBox,
   clientToViewBox,
   panViewport,
@@ -243,8 +243,6 @@ export function Map2D({
   );
   const showSatelliteLabels = satellites.length <= 20;
   const showSatelliteFootprints = satellites.length <= 30;
-  const zoomPercent = Math.round(((viewport.zoom - MIN_ZOOM) / (MAX_ZOOM - MIN_ZOOM)) * 100);
-
   viewportRef.current = viewport;
 
   function updateViewport(next: MapViewport | ((current: MapViewport) => MapViewport)) {
@@ -395,6 +393,7 @@ export function Map2D({
     }
 
     lastTapRef.current = { time: now, x: event.clientX, y: event.clientY };
+    setGestureHintVisible(false);
     beginPan(event.pointerId, event.clientX, event.clientY);
   }
 
@@ -499,7 +498,7 @@ export function Map2D({
     { id: "observer", name: "Observer", color: "#e0a458" }
   ];
 
-  return (
+  const mapSection = (
     <section
       className={`tracker-map-section relative h-[380px] w-full select-none overflow-hidden rounded-[10px] border border-[var(--line)] bg-[#0b0f14] sm:h-[460px] lg:h-[520px]${
         expanded ? " tracker-map-section-expanded" : ""
@@ -662,11 +661,24 @@ export function Map2D({
         </g>
       </svg>
 
-      <div className="tracker-map-controls pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 p-2.5 sm:p-3">
-        <div className="tracker-map-zoom-badge pointer-events-none rounded-md border border-[var(--line)] bg-black/45 px-2 py-1 font-mono text-[0.68rem] text-[var(--muted)] backdrop-blur">
+      <div className="tracker-map-chrome pointer-events-none absolute inset-0 z-10 p-2.5 sm:p-3">
+        <div className="tracker-map-zoom-badge absolute left-2.5 top-2.5 rounded-md border border-[var(--line)] bg-black/45 px-2 py-1 font-mono text-[0.68rem] text-[var(--muted)] backdrop-blur sm:left-3 sm:top-3">
           {viewport.zoom.toFixed(1)}x
         </div>
-        <div className="tracker-map-control-stack pointer-events-auto flex flex-col gap-1.5">
+
+        <button
+          type="button"
+          className="tracker-map-legend-toggle pointer-events-auto absolute left-2.5 top-11 sm:left-3"
+          aria-expanded={legendOpen}
+          onClick={() => {
+            setLegendOpen((current) => !current);
+            setGestureHintVisible(false);
+          }}
+        >
+          Legend
+        </button>
+
+        <div className="tracker-map-control-stack pointer-events-auto absolute right-2.5 top-2.5 flex flex-col gap-1.5 sm:right-3 sm:top-3">
           <Button
             className="tracker-map-control-btn"
             variant="secondary"
@@ -705,52 +717,46 @@ export function Map2D({
             {expanded ? <Minimize2 /> : <Maximize2 />}
           </Button>
         </div>
-      </div>
 
-      <div className="tracker-map-legend-wrap pointer-events-none absolute inset-x-0 bottom-0 z-10 p-2.5 sm:p-3">
-        <div className="flex items-end justify-between gap-2">
-          <button
-            type="button"
-            className="tracker-map-legend-toggle pointer-events-auto"
-            aria-expanded={legendOpen}
-            onClick={() => setLegendOpen((current) => !current)}
-          >
-            Legend
-          </button>
-          <div
-            className={`tracker-map-legend pointer-events-none rounded-[10px] border border-[var(--line)] bg-black/45 text-xs text-[var(--muted)] backdrop-blur ${
-              legendOpen ? "tracker-map-legend-open" : ""
-            }`}
-          >
-            <div className="flex flex-wrap gap-x-3 gap-y-1.5 px-3 py-2">
-              {legendItems.map((item) => (
-                <span key={item.id} className="inline-flex items-center gap-1.5">
-                  {item.color !== "transparent" ? (
-                    <span className="h-2 w-2 rounded-full" style={{ background: item.color }} />
-                  ) : null}
-                  {item.name}
-                </span>
-              ))}
-            </div>
+        <div
+          className={`tracker-map-legend absolute bottom-2.5 left-2.5 right-2.5 rounded-[10px] border border-[var(--line)] bg-black/45 text-xs text-[var(--muted)] backdrop-blur sm:bottom-3 sm:left-3 sm:right-auto ${
+            legendOpen ? "tracker-map-legend-open" : ""
+          }`}
+        >
+          <div className="flex flex-wrap gap-x-3 gap-y-1.5 px-3 py-2">
+            {legendItems.map((item) => (
+              <span key={item.id} className="inline-flex items-center gap-1.5">
+                {item.color !== "transparent" ? (
+                  <span className="h-2 w-2 rounded-full" style={{ background: item.color }} />
+                ) : null}
+                {item.name}
+              </span>
+            ))}
           </div>
         </div>
-      </div>
 
-      {gestureHintVisible ? (
-        <div className="tracker-map-gesture-hint pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center px-4 sm:bottom-16">
-          <p className="rounded-full border border-[var(--line)] bg-black/55 px-3 py-1.5 text-center text-[0.72rem] text-[var(--text)] backdrop-blur">
-            Drag to pan · Pinch or double-tap to zoom
-          </p>
-        </div>
-      ) : null}
-
-      <div className="tracker-map-zoom-rail pointer-events-none absolute bottom-14 right-3 top-14 hidden w-1 overflow-hidden rounded-full bg-white/10 sm:bottom-16">
-        <div
-          className="absolute bottom-0 left-0 right-0 bg-[var(--accent)]/70"
-          style={{ height: `${zoomPercent}%` }}
-          aria-hidden="true"
-        />
+        {gestureHintVisible ? (
+          <div className="tracker-map-gesture-hint absolute inset-x-0 bottom-3 flex justify-center px-4">
+            <p className="rounded-full border border-[var(--line)] bg-black/55 px-3 py-1.5 text-center text-[0.72rem] text-[var(--text)] backdrop-blur">
+              Drag to pan · Pinch or double-tap to zoom
+            </p>
+          </div>
+        ) : null}
       </div>
     </section>
   );
+
+  if (expanded && typeof document !== "undefined") {
+    return (
+      <>
+        <div
+          className="tracker-map-section tracker-map-section-placeholder h-[380px] w-full sm:h-[460px] lg:h-[520px]"
+          aria-hidden="true"
+        />
+        {createPortal(mapSection, document.body)}
+      </>
+    );
+  }
+
+  return mapSection;
 }
