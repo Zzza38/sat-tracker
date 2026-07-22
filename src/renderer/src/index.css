@@ -1150,31 +1150,113 @@ tbody tr:hover td {
   }
 
   .tracker-map-section {
-    height: min(62vh, 390px);
-    min-height: 300px;
+    height: min(58dvh, 460px);
+    min-height: 320px;
     border-radius: 9px;
   }
+}
 
-  .tracker-map-controls {
-    left: 0.65rem;
-    right: 0.65rem;
-    top: 0.65rem;
-    justify-content: flex-end;
+/* Map chrome defaults (desktop-first); mobile overrides follow. */
+.tracker-map-expand-btn,
+.tracker-map-legend-toggle,
+.tracker-map-gesture-hint {
+  display: none;
+}
+
+button.tracker-map-legend-toggle:not([data-slot]) {
+  min-height: 2.1rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(12, 13, 16, 0.72);
+  color: var(--text);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  -webkit-tap-highlight-color: transparent;
+}
+
+button.tracker-map-legend-toggle:not([data-slot]):hover {
+  background: rgba(20, 22, 26, 0.85);
+  color: var(--text);
+}
+
+/* Full-map focus mode: cover the shell so gestures own the screen. */
+.tracker-map-section-expanded {
+  position: fixed;
+  inset: 0 0 calc(4.4rem + env(safe-area-inset-bottom)) 0;
+  z-index: 10050;
+  width: auto;
+  height: auto !important;
+  min-height: 0;
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+@media (min-width: 641px) {
+  .tracker-map-section-expanded {
+    inset: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .tracker-map-control-stack {
+    top: 50%;
+    right: 0.7rem;
+    bottom: auto;
+    gap: 0.45rem;
+    transform: translateY(-50%);
   }
 
-  .tracker-map-controls .ui-button {
-    min-width: 2.25rem;
-    height: 2rem;
-    padding-inline: 0.65rem;
+  .tracker-map-control-btn {
+    width: 2.7rem;
+    height: 2.7rem;
+    border-radius: 10px;
+    background: rgba(12, 13, 16, 0.78);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+  }
+
+  .tracker-map-expand-btn,
+  button.tracker-map-legend-toggle:not([data-slot]) {
+    display: inline-flex;
+  }
+
+  button.tracker-map-legend-toggle:not([data-slot]) {
+    top: 2.55rem;
+    left: 0.7rem;
+  }
+
+  .tracker-map-zoom-badge {
+    left: 0.7rem;
+    top: 0.7rem;
   }
 
   .tracker-map-legend {
-    right: 0.65rem;
-    bottom: 0.65rem;
-    left: 0.65rem;
+    display: none;
+    right: 4.2rem;
+    bottom: 0.7rem;
+    left: 0.7rem;
     max-width: none;
-    flex-wrap: wrap;
-    gap: 0.45rem 0.7rem;
     font-size: 0.7rem;
+  }
+
+  .tracker-map-legend.tracker-map-legend-open {
+    display: block;
+  }
+
+  .tracker-map-gesture-hint {
+    display: flex;
+    bottom: 0.85rem;
+  }
+
+  .tracker-map-section-placeholder {
+    height: min(58dvh, 460px);
+    min-height: 320px;
+    border-color: transparent;
+    background: transparent;
   }
 }

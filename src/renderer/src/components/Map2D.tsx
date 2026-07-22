@@ -1,7 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
+import { Maximize2, Minimize2, Minus, Plus, RotateCcw } from "lucide-react";
 import { getMoonSubpoint, getSunSubpoint } from "@/shared/astro/lighting";
 import { GroundTrackPoint } from "@/shared/types";
 import { Button } from "./ui/button";
+import {
+  MAX_ZOOM,
+  clientDeltaToViewBox,
+  clientToViewBox,
+  panViewport,
+  pointerDistance,
+  pointerMidpoint,
+  zoomViewport,
+  type MapViewport
+} from "./mapViewport";
 import { WORLD_HEIGHT, WORLD_MAP_ASSET_URL, WORLD_WIDTH, projectLonLat } from "./worldMap";
 
 export interface TrackedSatelliteView {
@@ -37,23 +49,33 @@ interface UnwrappablePoint {
   longitudeDeg: number;
 }
 
+type ActiveGesture =
+  | {
+      kind: "pan";
+      pointerId: number;
+      x: number;
+      y: number;
+      panX: number;
+      panY: number;
+    }
+  | {
+      kind: "pinch";
+      pointers: Map<number, { clientX: number; clientY: number }>;
+      distance: number;
+      midpoint: { clientX: number; clientY: number };
+      viewport: MapViewport;
+    };
+
 const EARTH_RADIUS_KM = 6371;
-const MIN_ZOOM = 1;
-const MAX_ZOOM = 6;
 const EQUINOX_DECLINATION_EPSILON_DEG = 0.1;
 const RAD = Math.PI / 180;
 const DEG = 180 / Math.PI;
+const DOUBLE_TAP_MS = 280;
+const DOUBLE_TAP_MAX_DISTANCE_PX = 28;
+const DEFAULT_VIEWPORT: MapViewport = { panX: 0, panY: 0, zoom: 1 };
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
-}
-
-function clampPanY(value: number, zoom: number) {
-  if (zoom <= 1) {
-    return 0;
-  }
-
-  return clamp(value, WORLD_HEIGHT - WORLD_HEIGHT * zoom, 0);
 }
 
 function projectedPath(points: ProjectedPoint[], closePath = false) {
@@ -188,8 +210,13 @@ export function Map2D({
   onSatelliteDoubleClick
 }: Map2DProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const dragRef = useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null);
-  const [viewport, setViewport] = useState({ panX: 0, panY: 0, zoom: 1 });
+  const gestureRef = useRef<ActiveGesture | null>(null);
+  const viewportRef = useRef<MapViewport>(DEFAULT_VIEWPORT);
+  const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
+  const [viewport, setViewport] = useState<MapViewport>(DEFAULT_VIEWPORT);
+  const [expanded, setExpanded] = useState(false);
+  const [legendOpen, setLegendOpen] = useState(false);
+  const [gestureHintVisible, setGestureHintVisible] = useState(false);
   const worldCopies = useMemo(
     () => worldCopyRange(viewport.panX, viewport.zoom),
     [viewport.panX, viewport.zoom]
@@ -216,30 +243,22 @@ export function Map2D({
   );
   const showSatelliteLabels = satellites.length <= 20;
   const showSatelliteFootprints = satellites.length <= 30;
+  viewportRef.current = viewport;
 
-  function toViewBoxPoint(clientX: number, clientY: number) {
-    const bounds = svgRef.current?.getBoundingClientRect();
-    if (!bounds) {
-      return { x: 0, y: 0 };
-    }
-
-    return {
-      x: ((clientX - bounds.left) / bounds.width) * WORLD_WIDTH,
-      y: ((clientY - bounds.top) / bounds.height) * WORLD_HEIGHT
-    };
+  function updateViewport(next: MapViewport | ((current: MapViewport) => MapViewport)) {
+    setViewport((current) => {
+      const resolved = typeof next === "function" ? next(current) : next;
+      viewportRef.current = resolved;
+      return resolved;
+    });
   }
 
   function zoomBy(factor: number, anchor = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }) {
-    setViewport((current) => {
-      const nextZoom = clamp(current.zoom * factor, MIN_ZOOM, MAX_ZOOM);
-      const worldX = (anchor.x - current.panX) / current.zoom;
-      const worldY = (anchor.y - current.panY) / current.zoom;
-      return {
-        zoom: nextZoom,
-        panX: anchor.x - worldX * nextZoom,
-        panY: clampPanY(anchor.y - worldY * nextZoom, nextZoom)
-      };
-    });
+    updateViewport((current) => zoomViewport(current, factor, anchor));
+  }
+
+  function resetViewport() {
+    updateViewport(DEFAULT_VIEWPORT);
   }
 
   useEffect(() => {
@@ -250,60 +269,253 @@ export function Map2D({
 
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
-      const anchor = toViewBoxPoint(event.clientX, event.clientY);
+      const bounds = svg.getBoundingClientRect();
+      const anchor = clientToViewBox(bounds, event.clientX, event.clientY);
       zoomBy(event.deltaY < 0 ? 1.18 : 1 / 1.18, anchor);
     };
     svg.addEventListener("wheel", handleWheel, { passive: false });
     return () => svg.removeEventListener("wheel", handleWheel);
   }, []);
 
-  const markerScale = 1 / viewport.zoom;
+  useEffect(() => {
+    if (!expanded) {
+      return;
+    }
 
-  return (
-    <section className="tracker-map-section relative h-[380px] w-full select-none overflow-hidden rounded-[10px] border border-[var(--line)] bg-[#0b0f14] sm:h-[460px] lg:h-[520px]">
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setExpanded(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [expanded]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const coarse = window.matchMedia("(hover: none), (pointer: coarse)").matches;
+    if (!coarse) {
+      return;
+    }
+
+    const storageKey = "sat-tracker.map-gesture-hint-seen";
+    try {
+      if (window.localStorage.getItem(storageKey) === "1") {
+        return;
+      }
+      window.localStorage.setItem(storageKey, "1");
+    } catch {
+      // Ignore storage failures and still show the hint once per session.
+    }
+
+    setGestureHintVisible(true);
+    const timer = window.setTimeout(() => setGestureHintVisible(false), 3200);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  function beginPan(pointerId: number, clientX: number, clientY: number) {
+    const current = viewportRef.current;
+    gestureRef.current = {
+      kind: "pan",
+      pointerId,
+      x: clientX,
+      y: clientY,
+      panX: current.panX,
+      panY: current.panY
+    };
+  }
+
+  function beginPinch(
+    pointers: Map<number, { clientX: number; clientY: number }>
+  ) {
+    const [a, b] = [...pointers.values()];
+    if (!a || !b) {
+      return;
+    }
+
+    gestureRef.current = {
+      kind: "pinch",
+      pointers: new Map(pointers),
+      distance: Math.max(pointerDistance(a, b), 1),
+      midpoint: pointerMidpoint(a, b),
+      viewport: viewportRef.current
+    };
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<SVGSVGElement>) {
+    if ((event.target as Element).closest("[data-satellite-marker]")) {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const active = gestureRef.current;
+    if (active?.kind === "pan" && active.pointerId !== event.pointerId) {
+      const pointers = new Map<number, { clientX: number; clientY: number }>([
+        [active.pointerId, { clientX: active.x, clientY: active.y }],
+        [event.pointerId, { clientX: event.clientX, clientY: event.clientY }]
+      ]);
+      beginPinch(pointers);
+      lastTapRef.current = null;
+      return;
+    }
+
+    if (active?.kind === "pinch") {
+      active.pointers.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+      beginPinch(active.pointers);
+      return;
+    }
+
+    const now = performance.now();
+    const lastTap = lastTapRef.current;
+    if (
+      lastTap &&
+      now - lastTap.time <= DOUBLE_TAP_MS &&
+      Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) <= DOUBLE_TAP_MAX_DISTANCE_PX
+    ) {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const anchor = clientToViewBox(bounds, event.clientX, event.clientY);
+      zoomBy(viewportRef.current.zoom >= MAX_ZOOM - 0.01 ? 1 / MAX_ZOOM : 1.7, anchor);
+      lastTapRef.current = null;
+      gestureRef.current = null;
+      return;
+    }
+
+    lastTapRef.current = { time: now, x: event.clientX, y: event.clientY };
+    setGestureHintVisible(false);
+    beginPan(event.pointerId, event.clientX, event.clientY);
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<SVGSVGElement>) {
+    const gesture = gestureRef.current;
+    if (!gesture || !svgRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    const bounds = svgRef.current.getBoundingClientRect();
+
+    if (gesture.kind === "pan") {
+      if (gesture.pointerId !== event.pointerId) {
+        return;
+      }
+
+      const delta = clientDeltaToViewBox(bounds, event.clientX - gesture.x, event.clientY - gesture.y);
+      updateViewport(
+        panViewport(
+          {
+            zoom: viewportRef.current.zoom,
+            panX: gesture.panX,
+            panY: gesture.panY
+          },
+          delta.x,
+          delta.y
+        )
+      );
+      return;
+    }
+
+    if (!gesture.pointers.has(event.pointerId)) {
+      return;
+    }
+
+    gesture.pointers.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
+    if (gesture.pointers.size < 2) {
+      return;
+    }
+
+    const [a, b] = [...gesture.pointers.values()];
+    if (!a || !b) {
+      return;
+    }
+
+    const distance = Math.max(pointerDistance(a, b), 1);
+    const midpoint = pointerMidpoint(a, b);
+    const factor = distance / gesture.distance;
+    const anchor = clientToViewBox(bounds, gesture.midpoint.clientX, gesture.midpoint.clientY);
+    const zoomed = zoomViewport(gesture.viewport, factor, anchor);
+    const midDelta = clientDeltaToViewBox(
+      bounds,
+      midpoint.clientX - gesture.midpoint.clientX,
+      midpoint.clientY - gesture.midpoint.clientY
+    );
+    updateViewport(panViewport(zoomed, midDelta.x, midDelta.y));
+  }
+
+  function endPointer(event: ReactPointerEvent<SVGSVGElement>) {
+    const gesture = gestureRef.current;
+    if (!gesture) {
+      return;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (gesture.kind === "pan") {
+      if (gesture.pointerId === event.pointerId) {
+        gestureRef.current = null;
+      }
+      return;
+    }
+
+    gesture.pointers.delete(event.pointerId);
+    if (gesture.pointers.size >= 2) {
+      beginPinch(gesture.pointers);
+      return;
+    }
+
+    if (gesture.pointers.size === 1) {
+      const [pointerId, point] = [...gesture.pointers.entries()][0]!;
+      beginPan(pointerId, point.clientX, point.clientY);
+      return;
+    }
+
+    gestureRef.current = null;
+  }
+
+  const markerScale = 1 / viewport.zoom;
+  const legendItems = [
+    ...satellites.slice(0, 3).map((satellite) => ({
+      id: satellite.id,
+      name: satellite.name,
+      color: satellite.color
+    })),
+    ...(satellites.length > 3
+      ? [{ id: "more", name: `+${satellites.length - 3} more`, color: "transparent" }]
+      : []),
+    { id: "observer", name: "Observer", color: "#e0a458" }
+  ];
+
+  const mapSection = (
+    <section
+      className={`tracker-map-section relative h-[380px] w-full select-none overflow-hidden rounded-[10px] border border-[var(--line)] bg-[#0b0f14] sm:h-[460px] lg:h-[520px]${
+        expanded ? " tracker-map-section-expanded" : ""
+      }`}
+      data-expanded={expanded ? "true" : "false"}
+    >
       <svg
         ref={svgRef}
         viewBox={`0 0 ${WORLD_WIDTH} ${WORLD_HEIGHT}`}
+        preserveAspectRatio="xMidYMid slice"
         className="h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
         role="img"
-        aria-label="World map with satellite ground track"
-        onPointerDown={(event) => {
-          if ((event.target as Element).closest("[data-satellite-marker]")) {
-            return;
-          }
-          event.preventDefault();
-          event.currentTarget.setPointerCapture(event.pointerId);
-          dragRef.current = {
-            pointerId: event.pointerId,
-            x: event.clientX,
-            y: event.clientY,
-            panX: viewport.panX,
-            panY: viewport.panY
-          };
-        }}
-        onPointerMove={(event) => {
-          const drag = dragRef.current;
-          if (!drag || drag.pointerId !== event.pointerId || !svgRef.current) {
-            return;
-          }
-          event.preventDefault();
-
-          const bounds = svgRef.current.getBoundingClientRect();
-          const dx = ((event.clientX - drag.x) / bounds.width) * WORLD_WIDTH;
-          const dy = ((event.clientY - drag.y) / bounds.height) * WORLD_HEIGHT;
-          setViewport((current) => ({
-            ...current,
-            panX: drag.panX + dx,
-            panY: clampPanY(drag.panY + dy, current.zoom)
-          }));
-        }}
-        onPointerUp={(event) => {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-          dragRef.current = null;
-        }}
-        onPointerCancel={() => {
-          dragRef.current = null;
-        }}
+        aria-label="World map with satellite ground track. Drag to pan, pinch or double-tap to zoom."
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={endPointer}
+        onPointerCancel={endPointer}
       >
         <defs>
           <linearGradient id="oceanGradient" x1="0" x2="1" y1="0" y2="1">
@@ -428,7 +640,7 @@ export function Map2D({
                       onSatelliteDoubleClick?.(satellite.id);
                     }}
                   >
-                    <title>{`Click to inspect ${satellite.name}`}</title>
+                    <title>{`Tap to inspect ${satellite.name}`}</title>
                     <circle r={satellite.selected ? "10" : "7"} fill={satellite.color} filter="url(#markerGlow)" />
                     <circle r={satellite.selected ? "16" : "12"} fill="none" stroke={satellite.color} strokeOpacity="0.68" strokeWidth="2.5" />
                     {showSatelliteLabels || satellite.selected ? (
@@ -449,31 +661,102 @@ export function Map2D({
         </g>
       </svg>
 
-      <div className="tracker-map-controls pointer-events-none absolute right-3 top-3 flex gap-2">
-        <Button className="pointer-events-auto" variant="secondary" size="xs" onClick={() => zoomBy(1.18)}>
-          +
-        </Button>
-        <Button className="pointer-events-auto" variant="secondary" size="xs" onClick={() => zoomBy(1 / 1.18)}>
-          -
-        </Button>
-        <Button className="pointer-events-auto" variant="secondary" size="xs" onClick={() => setViewport({ panX: 0, panY: 0, zoom: 1 })}>
-          Reset
-        </Button>
-      </div>
+      <div className="tracker-map-chrome pointer-events-none absolute inset-0 z-10 p-2.5 sm:p-3">
+        <div className="tracker-map-zoom-badge absolute left-2.5 top-2.5 rounded-md border border-[var(--line)] bg-black/45 px-2 py-1 font-mono text-[0.68rem] text-[var(--muted)] backdrop-blur sm:left-3 sm:top-3">
+          {viewport.zoom.toFixed(1)}x
+        </div>
 
-      <div className="tracker-map-legend pointer-events-none absolute bottom-3 left-3 flex gap-3 rounded-[10px] border border-[var(--line)] bg-black/35 px-3 py-2 text-xs text-[var(--muted)] backdrop-blur">
-        {satellites.slice(0, 3).map((satellite) => (
-          <span key={satellite.id} className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full" style={{ background: satellite.color }} />
-            {satellite.name}
-          </span>
-        ))}
-        {satellites.length > 3 ? <span>+{satellites.length - 3} more</span> : null}
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-[#e0a458]" />
-          Observer
-        </span>
+        <button
+          type="button"
+          className="tracker-map-legend-toggle pointer-events-auto absolute left-2.5 top-11 sm:left-3"
+          aria-expanded={legendOpen}
+          onClick={() => {
+            setLegendOpen((current) => !current);
+            setGestureHintVisible(false);
+          }}
+        >
+          Legend
+        </button>
+
+        <div className="tracker-map-control-stack pointer-events-auto absolute right-2.5 top-2.5 flex flex-col gap-1.5 sm:right-3 sm:top-3">
+          <Button
+            className="tracker-map-control-btn"
+            variant="secondary"
+            size="icon-sm"
+            aria-label="Zoom in"
+            onClick={() => zoomBy(1.18)}
+          >
+            <Plus />
+          </Button>
+          <Button
+            className="tracker-map-control-btn"
+            variant="secondary"
+            size="icon-sm"
+            aria-label="Zoom out"
+            onClick={() => zoomBy(1 / 1.18)}
+          >
+            <Minus />
+          </Button>
+          <Button
+            className="tracker-map-control-btn"
+            variant="secondary"
+            size="icon-sm"
+            aria-label="Reset map view"
+            onClick={resetViewport}
+          >
+            <RotateCcw />
+          </Button>
+          <Button
+            className="tracker-map-control-btn tracker-map-expand-btn"
+            variant="secondary"
+            size="icon-sm"
+            aria-label={expanded ? "Exit full map" : "Open full map"}
+            aria-pressed={expanded}
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded ? <Minimize2 /> : <Maximize2 />}
+          </Button>
+        </div>
+
+        <div
+          className={`tracker-map-legend absolute bottom-2.5 left-2.5 right-2.5 rounded-[10px] border border-[var(--line)] bg-black/45 text-xs text-[var(--muted)] backdrop-blur sm:bottom-3 sm:left-3 sm:right-auto ${
+            legendOpen ? "tracker-map-legend-open" : ""
+          }`}
+        >
+          <div className="flex flex-wrap gap-x-3 gap-y-1.5 px-3 py-2">
+            {legendItems.map((item) => (
+              <span key={item.id} className="inline-flex items-center gap-1.5">
+                {item.color !== "transparent" ? (
+                  <span className="h-2 w-2 rounded-full" style={{ background: item.color }} />
+                ) : null}
+                {item.name}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {gestureHintVisible ? (
+          <div className="tracker-map-gesture-hint absolute inset-x-0 bottom-3 flex justify-center px-4">
+            <p className="rounded-full border border-[var(--line)] bg-black/55 px-3 py-1.5 text-center text-[0.72rem] text-[var(--text)] backdrop-blur">
+              Drag to pan · Pinch or double-tap to zoom
+            </p>
+          </div>
+        ) : null}
       </div>
     </section>
   );
+
+  if (expanded && typeof document !== "undefined") {
+    return (
+      <>
+        <div
+          className="tracker-map-section tracker-map-section-placeholder h-[380px] w-full sm:h-[460px] lg:h-[520px]"
+          aria-hidden="true"
+        />
+        {createPortal(mapSection, document.body)}
+      </>
+    );
+  }
+
+  return mapSection;
 }
