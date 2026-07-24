@@ -11,7 +11,8 @@ export function DetailsPage() {
   const {
     selectedSatellite,
     observer,
-    refreshSelectedSatellite
+    refreshSelectedSatellite,
+    setPage
   } = useApp();
   const now = useTicker(1000);
 
@@ -74,7 +75,14 @@ export function DetailsPage() {
             </Button>
           </>
         ) : (
-          <p className="mt-2 text-[var(--muted)]">Select a satellite to inspect orbital elements and upcoming passes.</p>
+          <>
+            <p className="mt-2 text-[var(--muted)]">
+              Select a satellite to inspect orbital elements and upcoming passes.
+            </p>
+            <Button className="mt-4" onClick={() => setPage("catalog")}>
+              Open Catalog
+            </Button>
+          </>
         )}
       </div>
     );

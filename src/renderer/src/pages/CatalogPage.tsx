@@ -123,6 +123,8 @@ export function CatalogPage() {
         </div>
         <input
           className="max-w-sm"
+          type="search"
+          aria-label="Search satellites"
           placeholder="Search name, NORAD, designator"
           value={query}
           onChange={(event) => setQuery(event.target.value)}

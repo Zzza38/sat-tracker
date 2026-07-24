@@ -70,7 +70,7 @@ export function ElevationChart({
         return (
           <g key={tick}>
             <line x1={plotLeft} x2={plotRight} y1={y} y2={y} stroke="rgba(255,255,255,0.06)" />
-            <text x={plotLeft - 10} y={y + 4} fill="#6c7079" fontSize="10" textAnchor="end">
+            <text x={plotLeft - 10} y={y + 4} fill="#8a8e97" fontSize="10" textAnchor="end">
               {tick}°
             </text>
           </g>
@@ -129,7 +129,7 @@ export function ElevationChart({
       <text x={plotLeft} y={height - 16} fill="#9a9ea7" fontSize="10" textAnchor="start">
         AOS {formatTime(start)}
       </text>
-      <text x={(plotLeft + plotRight) / 2} y={height - 16} fill="#6c7079" fontSize="10" textAnchor="middle">
+      <text x={(plotLeft + plotRight) / 2} y={height - 16} fill="#8a8e97" fontSize="10" textAnchor="middle">
         Time
       </text>
       <text x={plotRight} y={height - 16} fill="#9a9ea7" fontSize="10" textAnchor="end">
