@@ -627,6 +627,7 @@ export function Map2D({
                     className="cursor-pointer"
                     data-satellite-marker
                     role="button"
+                    tabIndex={0}
                     aria-label={`Inspect ${satellite.name}`}
                     transform={`translate(${satellite.point.x} ${satellite.point.y}) scale(${markerScale})`}
                     onClick={(event) => {
@@ -638,6 +639,13 @@ export function Map2D({
                       event.preventDefault();
                       event.stopPropagation();
                       onSatelliteDoubleClick?.(satellite.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onSatelliteDoubleClick?.(satellite.id);
+                      }
                     }}
                   >
                     <title>{`Tap to inspect ${satellite.name}`}</title>

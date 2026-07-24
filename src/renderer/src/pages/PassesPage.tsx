@@ -41,6 +41,7 @@ export function PassesPage() {
   const computeRequestRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [days, setDays] = useState(7);
+  const [daysDraft, setDaysDraft] = useState(7);
   const [error, setError] = useState<string | null>(null);
   const [computeProgress, setComputeProgress] = useState<{ completed: number; total: number } | null>(null);
   const [colorByElevation, setColorByElevation] = useState(readColorByElevationPreference);
@@ -186,11 +187,12 @@ export function PassesPage() {
                 min={1}
                 max={14}
                 step={1}
-                value={[days]}
+                value={[daysDraft]}
                 aria-label="Pass prediction window"
-                onValueChange={([value]) => setDays(value ?? 7)}
+                onValueChange={([value]) => setDaysDraft(value ?? 7)}
+                onValueCommit={([value]) => setDays(value ?? 7)}
               />
-              <span className="mono text-right text-xs text-[var(--text)]">{days}d</span>
+              <span className="mono text-right text-xs text-[var(--text)]">{daysDraft}d</span>
             </div>
             <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-3">
               <Button disabled={loading} onClick={() => void computePasses()}>
@@ -305,16 +307,16 @@ export function PassesPage() {
               </tr>
             </thead>
             <tbody>
-              {passes.map((pass) => (
+              {passes.map((pass) => {
+                const selected =
+                  selectedPass?.satelliteId === pass.satelliteId && selectedPass.aos === pass.aos;
+                return (
                 <tr
                   key={`${pass.satelliteId}-${pass.aos}`}
-                  className={clsx(
-                    "cursor-pointer",
-                    selectedPass?.satelliteId === pass.satelliteId &&
-                      selectedPass.aos === pass.aos &&
-                      "bg-[var(--accent-soft)]"
-                  )}
+                  className={clsx("cursor-pointer", selected && "bg-[var(--accent-soft)]")}
                   tabIndex={0}
+                  aria-selected={selected}
+                  aria-label={`${pass.satelliteName} pass. Enter to inspect geometry.`}
                   onClick={() => selectPass(pass)}
                   onDoubleClick={() => inspectPass(pass)}
                   onKeyDown={(event) => {
@@ -323,7 +325,7 @@ export function PassesPage() {
                       inspectPass(pass);
                     }
                   }}
-                  title="Double-click to inspect pass geometry"
+                  title="Click to select, Enter or double-click to inspect geometry"
                 >
                   <td>
                     <span className="inline-flex items-center gap-2">
@@ -351,7 +353,8 @@ export function PassesPage() {
                   <td>{formatDuration(pass.durationSec)}</td>
                   <td>{pass.illuminated ? "Yes" : "No"}</td>
                 </tr>
-              ))}
+                );
+              })}
               {!loading && passes.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-sm text-[var(--muted)]">

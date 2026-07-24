@@ -84,6 +84,7 @@ interface AppContextValue {
   toggleWatchlist: (satelliteId: string) => Promise<string[]>;
   selectObserver: (observerId: string) => Promise<void>;
   updateObserver: (observer: ObserverSite) => Promise<void>;
+  deleteObserver: (observerId: string) => Promise<void>;
   updateSettings: (partial: Partial<Awaited<ReturnType<typeof getSettings>>>) => Promise<void>;
   getSatelliteColor: (satelliteId: string, orderedIds: string[]) => string;
   setSatelliteColor: (satelliteId: string, color: string) => Promise<void>;
@@ -431,6 +432,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setObserver(nextObserver);
       setSettings(nextSettings);
       setObservers(await db.observers.toArray());
+    },
+    deleteObserver: async (observerId) => {
+      const currentObservers = await db.observers.toArray();
+      if (currentObservers.length <= 1) {
+        throw new Error("At least one observer is required.");
+      }
+
+      const target = currentObservers.find((entry) => entry.id === observerId);
+      if (!target) {
+        throw new Error("Observer not found.");
+      }
+
+      await db.observers.delete(observerId);
+      const remaining = await db.observers.toArray();
+      const nextActive =
+        settings?.activeObserverId === observerId
+          ? remaining[0]
+          : remaining.find((entry) => entry.id === settings?.activeObserverId) ?? remaining[0];
+
+      if (!nextActive) {
+        throw new Error("At least one observer is required.");
+      }
+
+      await saveSettings({ activeObserverId: nextActive.id });
+      const nextSettings = await getSettings();
+      setObserver(nextActive);
+      setSettings(nextSettings);
+      setObservers(remaining);
     },
     updateSettings: async (partial) => {
       await saveSettings(partial);

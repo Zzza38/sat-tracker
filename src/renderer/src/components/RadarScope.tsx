@@ -96,7 +96,7 @@ export function RadarScope({
             {label}
           </text>
         ))}
-        <text x={CENTER} y={CENTER - 5} textAnchor="middle" fill="#6c7079" fontSize="10">
+        <text x={CENTER} y={CENTER - 5} textAnchor="middle" fill="#8a8e97" fontSize="10">
           Zenith
         </text>
 
@@ -109,10 +109,23 @@ export function RadarScope({
             <g
               key={satellite.id}
               className="cursor-pointer"
+              role="button"
+              tabIndex={0}
+              aria-label={`Inspect ${satellite.name}`}
               opacity={belowMask ? 0.18 : 1}
+              onClick={(event) => {
+                event.preventDefault();
+                onSatelliteDoubleClick?.(satellite.id);
+              }}
               onDoubleClick={(event) => {
                 event.preventDefault();
                 onSatelliteDoubleClick?.(satellite.id);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSatelliteDoubleClick?.(satellite.id);
+                }
               }}
             >
               <title>{`${satellite.name}: az ${satellite.azimuthDeg.toFixed(1)} deg, el ${satellite.elevationDeg.toFixed(1)} deg`}</title>
