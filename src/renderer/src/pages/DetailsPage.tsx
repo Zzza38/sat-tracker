@@ -1,7 +1,6 @@
-import { predictPassesForSatellite } from "@/shared/passes/predictor-core";
 import { useMemo } from "react";
 import { computeOrbitSnapshot, getOrbitMetrics } from "@/shared/propagation/engine";
-import { epochAgeDays, formatRelativeAge, formatTimestamp } from "@/shared/utils/date";
+import { epochAgeDays, formatRelativeAge } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
 import { useTicker } from "../hooks/useTicker";
 import { Button } from "../components/ui/button";
@@ -40,23 +39,6 @@ export function DetailsPage() {
     }
   }, [selectedSatellite]);
 
-  // Re-anchor the prediction window every minute so the list rolls forward over time.
-  const passWindowKey = Math.floor(now.getTime() / 60000);
-  const upcoming = useMemo(() => {
-    if (!selectedSatellite) {
-      return [];
-    }
-
-    const start = new Date(passWindowKey * 60000);
-    try {
-      return predictPassesForSatellite(selectedSatellite, observer, {
-        start,
-        end: new Date(start.getTime() + 3 * 86400000)
-      }).slice(0, 5);
-    } catch {
-      return [];
-    }
-  }, [observer, passWindowKey, selectedSatellite]);
   const epochAge = selectedSatellite ? epochAgeDays(selectedSatellite.epoch, now) : undefined;
 
   if (!selectedSatellite || !snapshot || !metrics) {
@@ -74,14 +56,14 @@ export function DetailsPage() {
             </Button>
           </>
         ) : (
-          <p className="mt-2 text-[var(--muted)]">Select a satellite to inspect orbital elements and upcoming passes.</p>
+          <p className="mt-2 text-[var(--muted)]">Select a satellite to inspect orbital elements.</p>
         )}
       </div>
     );
   }
 
   return (
-    <div className="grid min-w-0 gap-6 xl:grid-cols-[1fr_0.9fr]">
+    <div className="min-w-0">
       <section className="panel min-w-0 p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -130,22 +112,6 @@ export function DetailsPage() {
               ? `${selectedSatellite.tle.line1}\n${selectedSatellite.tle.line2}`
               : JSON.stringify(selectedSatellite.omm, null, 2)}
           </pre>
-        </div>
-      </section>
-
-      <section className="panel min-w-0 p-4 sm:p-5">
-        <p className="label">Upcoming passes</p>
-        <div className="mt-4 space-y-3">
-          {upcoming.map((pass) => (
-            <div key={`${pass.satelliteId}-${pass.aos}`} className="panel-strong p-4">
-              <div className="font-semibold text-[var(--text)]">{formatTimestamp(pass.aos)}</div>
-              <div className="mono mt-1.5 text-sm text-[var(--muted)]">
-                Max {pass.maxElevationDeg.toFixed(1)}° · AOS az {pass.aosAzimuthDeg.toFixed(0)}° · LOS az{" "}
-                {pass.losAzimuthDeg.toFixed(0)}°
-              </div>
-            </div>
-          ))}
-          {upcoming.length === 0 ? <p className="text-[var(--muted)]">No passes above the current horizon mask.</p> : null}
         </div>
       </section>
     </div>
