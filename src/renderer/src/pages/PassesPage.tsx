@@ -65,7 +65,7 @@ export function PassesPage() {
     selectedPassRef.current = selectedPass;
   }, [selectedPass]);
 
-  const computePasses = useCallback(async () => {
+  const computePasses = useCallback(async (predictionDays: number) => {
     const requestId = computeRequestRef.current + 1;
     computeRequestRef.current = requestId;
     const streamedPasses: typeof passes = [];
@@ -85,7 +85,7 @@ export function PassesPage() {
 
       setComputeProgress({ completed: 0, total: targets.length });
       const start = new Date(Math.floor(Date.now() / 60000) * 60000);
-      const end = new Date(start.getTime() + days * 86400000);
+      const end = new Date(start.getTime() + predictionDays * 86400000);
       const results = await predictPassesBulkStreaming(
         targets,
         observer,
@@ -128,11 +128,21 @@ export function PassesPage() {
         setComputeProgress(null);
       }
     }
-  }, [days, observer, selectPass, setPasses, visiblePassTargets]);
+  }, [observer, selectPass, setPasses, visiblePassTargets]);
 
   useEffect(() => {
-    void computePasses();
-  }, [computePasses]);
+    // Auto-compute only after the slider commits so dragging does not spam predictions.
+    void computePasses(days);
+  }, [computePasses, days]);
+
+  function handleComputePasses() {
+    // The label/slider show daysDraft; commit it so prediction matches the visible window.
+    if (daysDraft !== days) {
+      setDays(daysDraft);
+      return;
+    }
+    void computePasses(daysDraft);
+  }
 
   const selectedPassSatelliteColor = selectedPass
     ? getSatelliteColor(selectedPass.satelliteId, visibleSatelliteIds)
@@ -195,7 +205,7 @@ export function PassesPage() {
               <span className="mono text-right text-xs text-[var(--text)]">{daysDraft}d</span>
             </div>
             <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-3">
-              <Button disabled={loading} onClick={() => void computePasses()}>
+              <Button disabled={loading} onClick={handleComputePasses}>
                 {loading ? "Computing..." : (
                   <>
                     <span className="sm:hidden">Compute</span>
