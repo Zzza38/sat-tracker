@@ -147,12 +147,23 @@ export function SettingsPage() {
     matchCityPreset(observerToDraft(observer))
   );
   const observerDirtyRef = useRef(false);
+  const observerSaveTimeoutRef = useRef<number | undefined>(undefined);
+  const observerSaveEpochRef = useRef(0);
   const sourceUrlsDirtyRef = useRef(false);
   const [refreshIntervalDraft, setRefreshIntervalDraft] = useState(String(settings.refreshIntervalValue));
   const [sourceUrls, setSourceUrls] = useState(() =>
     settings.tleSources.map((source) => tleSourceUrl(source)).join("\n")
   );
   const observerValidation = useMemo(() => parseObserverDraft(draft), [draft]);
+
+  function discardPendingObserverSave() {
+    if (observerSaveTimeoutRef.current !== undefined) {
+      window.clearTimeout(observerSaveTimeoutRef.current);
+      observerSaveTimeoutRef.current = undefined;
+    }
+    observerSaveEpochRef.current += 1;
+    observerDirtyRef.current = false;
+  }
 
   useEffect(() => {
     if (!observerDirtyRef.current) {
@@ -179,15 +190,32 @@ export function SettingsPage() {
       return;
     }
 
-    const timeout = window.setTimeout(() => {
-      void updateObserver(observerValidation.observer).then(() => {
+    const saveEpoch = observerSaveEpochRef.current;
+    const observerToSave = observerValidation.observer;
+    observerSaveTimeoutRef.current = window.setTimeout(() => {
+      observerSaveTimeoutRef.current = undefined;
+      // Bail if the user switched observers or discarded this draft before the timer fired.
+      if (!observerDirtyRef.current || observerSaveEpochRef.current !== saveEpoch) {
+        return;
+      }
+
+      void updateObserver(observerToSave).then(() => {
+        // Ignore completions from a previous observer after a switch/create/delete.
+        if (observerSaveEpochRef.current !== saveEpoch) {
+          return;
+        }
         observerDirtyRef.current = false;
         setSavedIsError(false);
         setSaved("Observer saved.");
       });
     }, 450);
 
-    return () => window.clearTimeout(timeout);
+    return () => {
+      if (observerSaveTimeoutRef.current !== undefined) {
+        window.clearTimeout(observerSaveTimeoutRef.current);
+        observerSaveTimeoutRef.current = undefined;
+      }
+    };
   }, [observerValidation, updateObserver]);
 
   useEffect(() => {
@@ -206,10 +234,11 @@ export function SettingsPage() {
       return;
     }
 
-    observerDirtyRef.current = false;
+    discardPendingObserverSave();
     setCityPresetId(preset.id);
     const nextObserver = {
       ...preset,
+      id: draft.id,
       minElevationDeg: draft.minElevationDeg
     };
     setDraft(observerToDraft(nextObserver));
@@ -224,10 +253,11 @@ export function SettingsPage() {
       id: `observer-${Date.now().toString(36)}`,
       name: "New observer"
     };
-    observerDirtyRef.current = false;
+    discardPendingObserverSave();
     setCityPresetId(matchCityPreset(observerToDraft(nextObserver)));
     setDraft(observerToDraft(nextObserver));
     await updateObserver(nextObserver);
+    await selectObserver(nextObserver.id);
     setSavedIsError(false);
     setSaved("New observer created.");
   }
@@ -240,7 +270,7 @@ export function SettingsPage() {
     }
 
     try {
-      observerDirtyRef.current = false;
+      discardPendingObserverSave();
       await deleteObserver(draft.id);
       setSavedIsError(false);
       setSaved("Observer deleted.");
@@ -343,7 +373,7 @@ export function SettingsPage() {
               <Select
                 value={activeObserverId}
                 onValueChange={(observerId) => {
-                  observerDirtyRef.current = false;
+                  discardPendingObserverSave();
                   setSaved(null);
                   void selectObserver(observerId);
                 }}
