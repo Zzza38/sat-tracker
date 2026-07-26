@@ -15,7 +15,7 @@ import { DEFAULT_TLE_SOURCES, refreshIntervalToHours } from "@/shared/tle/source
 import { resolveSatelliteColor } from "@/shared/satellite/colors";
 import { ObserverSite, PassPrediction, SatelliteRecord } from "@/shared/types";
 
-type Page = "catalog" | "tracker" | "passes" | "details" | "settings";
+type Page = "catalog" | "tracker" | "ar" | "passes" | "details" | "settings";
 
 interface StoredUiState {
   page?: Page;
@@ -44,7 +44,7 @@ function writeUiState(partial: StoredUiState) {
 }
 
 function normalizePage(page: unknown): Page {
-  return page === "catalog" || page === "tracker" || page === "passes" || page === "details" || page === "settings"
+  return page === "catalog" || page === "tracker" || page === "ar" || page === "passes" || page === "details" || page === "settings"
     ? page
     : "catalog";
 }

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { clsx } from "clsx";
+import { Bell, BellRing } from "lucide-react";
 import { predictPassesBulkStreaming, passesToCsv, passesToIcs } from "@/shared/passes/predictor";
 import { formatDuration, formatTimestamp } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
@@ -11,6 +12,12 @@ import { Slider } from "../components/ui/slider";
 import { Switch } from "../components/ui/switch";
 import { saveTextFile } from "../lib/platform";
 import { elevationToColor } from "@/shared/passes/elevation-color";
+import {
+  hasPassReminder,
+  REMINDERS_CHANGED_EVENT,
+  togglePassReminder
+} from "../lib/passReminders";
+import { requestNotificationPermission } from "../lib/platform";
 
 const PASS_COLOR_BY_ELEVATION_KEY = "sat-tracker-passes-color-by-elevation";
 
@@ -44,6 +51,7 @@ export function PassesPage() {
   const [error, setError] = useState<string | null>(null);
   const [computeProgress, setComputeProgress] = useState<{ completed: number; total: number } | null>(null);
   const [colorByElevation, setColorByElevation] = useState(readColorByElevationPreference);
+  const [, setReminderRevision] = useState(0);
   const visiblePassTargets = useMemo(() => {
     if (watchlistIds.length > 0) {
       const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
@@ -63,6 +71,12 @@ export function PassesPage() {
   useEffect(() => {
     selectedPassRef.current = selectedPass;
   }, [selectedPass]);
+
+  useEffect(() => {
+    const refresh = () => setReminderRevision((value) => value + 1);
+    window.addEventListener(REMINDERS_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(REMINDERS_CHANGED_EVENT, refresh);
+  }, []);
 
   const computePasses = useCallback(async () => {
     const requestId = computeRequestRef.current + 1;
@@ -169,6 +183,16 @@ export function PassesPage() {
     }
   }
 
+  async function toggleReminder(event: MouseEvent, pass: (typeof passes)[number]) {
+    event.stopPropagation();
+    if (!hasPassReminder(pass) && !(await requestNotificationPermission())) {
+      setError("Notification permission is required to set a pass alert.");
+      return;
+    }
+    togglePassReminder(pass);
+    setReminderRevision((value) => value + 1);
+  }
+
   return (
     <div className="grid min-w-0 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
       <section className="panel min-w-0 p-4 sm:p-5">
@@ -250,11 +274,18 @@ export function PassesPage() {
             const selected =
               selectedPass?.satelliteId === pass.satelliteId && selectedPass.aos === pass.aos;
             return (
-              <button
+              <div
                 key={`${pass.satelliteId}-${pass.aos}`}
-                type="button"
                 className={clsx("pass-card", selected && "selected")}
+                role="button"
+                tabIndex={0}
                 onClick={() => inspectPass(pass)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    inspectPass(pass);
+                  }
+                }}
               >
                 <span className="flex min-w-0 items-center justify-between gap-3">
                   <span className="flex min-w-0 items-center gap-2 font-medium text-[var(--text)]">
@@ -281,7 +312,15 @@ export function PassesPage() {
                   <span>{formatDuration(pass.durationSec)}</span>
                   <span>{pass.illuminated ? "Sunlit" : "In shadow"}</span>
                 </span>
-              </button>
+                <button
+                  type="button"
+                  className={clsx("pass-notify", hasPassReminder(pass) && "active")}
+                  onClick={(event) => void toggleReminder(event, pass)}
+                >
+                  {hasPassReminder(pass) ? <BellRing size={14} /> : <Bell size={14} />}
+                  {hasPassReminder(pass) ? "Alert set" : "Notify"}
+                </button>
+              </div>
             );
           })}
           {!loading && passes.length === 0 ? (
@@ -302,6 +341,7 @@ export function PassesPage() {
                 <th>Max El</th>
                 <th>Duration</th>
                 <th>Lit</th>
+                <th>Alert</th>
               </tr>
             </thead>
             <tbody>
@@ -350,11 +390,21 @@ export function PassesPage() {
                   </td>
                   <td>{formatDuration(pass.durationSec)}</td>
                   <td>{pass.illuminated ? "Yes" : "No"}</td>
+                  <td>
+                    <Button
+                      size="xs"
+                      variant={hasPassReminder(pass) ? "default" : "secondary"}
+                      onClick={(event) => void toggleReminder(event, pass)}
+                    >
+                      {hasPassReminder(pass) ? <BellRing size={13} /> : <Bell size={13} />}
+                      {hasPassReminder(pass) ? "Set" : "Notify"}
+                    </Button>
+                  </td>
                 </tr>
               ))}
               {!loading && passes.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-sm text-[var(--muted)]">
+                  <td colSpan={8} className="py-8 text-center text-sm text-[var(--muted)]">
                     No passes found for the selected satellites and time window.
                   </td>
                 </tr>

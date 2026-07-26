@@ -6,6 +6,7 @@ import { isElectronRuntime } from "../lib/platform";
 const pageLabels = {
   catalog: "Catalog",
   tracker: "Tracker",
+  ar: "AR finder",
   passes: "Passes",
   details: "Details",
   settings: "Settings"
