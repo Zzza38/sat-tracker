@@ -16,6 +16,7 @@ const APP_ICON_ASSET_URL = `${import.meta.env.BASE_URL}sat-tracker-icon.svg`;
 export function ElectronTitlebar() {
   const { page, satellites, watchlistIds, selectedSatelliteId, selectSatellite } = useApp();
   const isElectron = isElectronRuntime();
+  const platform = window.electronAPI?.platform;
   const [satelliteMenuOpen, setSatelliteMenuOpen] = useState(false);
   const satelliteMenuRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef<{ pointerId: number } | null>(null);
@@ -96,6 +97,7 @@ export function ElectronTitlebar() {
     <div
       className="electron-titlebar"
       data-electron={isElectron ? "true" : "false"}
+      data-platform={platform}
       onPointerDown={handleTitlebarPointerDown}
       onPointerMove={handleTitlebarPointerMove}
       onPointerUp={handleTitlebarPointerEnd}
@@ -113,7 +115,7 @@ export function ElectronTitlebar() {
             type="button"
             className="electron-titlebar-satellite-trigger"
             onClick={() => setSatelliteMenuOpen((open) => !open)}
-            aria-haspopup="listbox"
+            aria-haspopup="menu"
             aria-expanded={satelliteMenuOpen}
             disabled={trackedSatellites.length === 0}
           >
@@ -126,7 +128,7 @@ export function ElectronTitlebar() {
             <ChevronDown size={13} aria-hidden="true" />
           </button>
           {satelliteMenuOpen && trackedSatellites.length > 0 ? (
-            <div className="electron-titlebar-satellite-menu" role="listbox" aria-label="Tracked satellites">
+            <div className="electron-titlebar-satellite-menu" role="menu" aria-label="Tracked satellites">
               {trackedSatellites.map((satellite) => {
                 const selected = satellite.id === selectedSatelliteId;
                 return (
@@ -134,8 +136,8 @@ export function ElectronTitlebar() {
                     key={satellite.id}
                     type="button"
                     className="electron-titlebar-satellite-option"
-                    role="option"
-                    aria-selected={selected}
+                    role="menuitemradio"
+                    aria-checked={selected}
                     onClick={() => {
                       selectSatellite(satellite.id);
                       setSatelliteMenuOpen(false);

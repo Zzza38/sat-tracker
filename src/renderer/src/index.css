@@ -35,7 +35,7 @@
   --line-strong: rgba(255, 255, 255, 0.12);
   --text: #e9eaec;
   --muted: #9a9ea7;
-  --faint: #6c7079;
+  --faint: #8a8e97;
   --accent: #6c8cff;
   --accent-hover: #5a7df5;
   --accent-soft: rgba(108, 140, 255, 0.14);
@@ -162,6 +162,11 @@ select {
 
 .electron-titlebar[data-electron="true"] {
   padding-right: 138px;
+}
+
+.electron-titlebar[data-electron="true"][data-platform="darwin"] {
+  padding-left: 78px;
+  padding-right: 0.75rem;
 }
 
 .electron-titlebar-brand,
@@ -303,6 +308,7 @@ button.electron-titlebar-satellite-option:not([data-slot]) {
 }
 
 button.electron-titlebar-satellite-option:not([data-slot]):hover,
+button.electron-titlebar-satellite-option[aria-checked="true"]:not([data-slot]),
 button.electron-titlebar-satellite-option[aria-selected="true"]:not([data-slot]) {
   background: rgba(108, 140, 255, 0.16);
   color: #ffffff;
@@ -502,6 +508,17 @@ input[type="color"].satellite-color-picker::-moz-color-swatch {
   background: var(--surface-2);
 }
 
+.tracker-satellite-pill.selected {
+  border-color: rgba(108, 140, 255, 0.55);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(108, 140, 255, 0.2);
+}
+
+.tracker-satellite-pill.selected:hover {
+  border-color: rgba(108, 140, 255, 0.7);
+  background: rgba(108, 140, 255, 0.2);
+}
+
 textarea {
   min-height: 132px;
   resize: vertical;
@@ -686,116 +703,6 @@ button.radar-target-row:not([data-slot]) {
 button.radar-target-row:not([data-slot]):hover {
   border-color: var(--line);
   background: var(--surface-2);
-}
-
-.ui-card {
-  border: 1px solid hsl(217 19% 19%);
-  border-radius: 8px;
-  background: hsl(220 11% 11%);
-  color: var(--text);
-}
-
-.ui-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  border-radius: 7px;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  line-height: 1;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
-}
-
-.ui-button-sm {
-  height: 2rem;
-  padding: 0 0.7rem;
-}
-
-.ui-button-md {
-  height: 2.35rem;
-  padding: 0 0.9rem;
-}
-
-.ui-button-default {
-  border-color: hsl(221 83% 64%);
-  background: hsl(221 83% 58%);
-  color: white;
-}
-
-.ui-button-default:hover:not(:disabled) {
-  background: hsl(221 83% 53%);
-}
-
-.ui-button-secondary {
-  border-color: hsl(217 19% 24%);
-  background: hsl(220 10% 14%);
-  color: hsl(210 20% 92%);
-}
-
-.ui-button-secondary:hover:not(:disabled) {
-  background: hsl(220 10% 18%);
-}
-
-.ui-button-ghost {
-  border-color: transparent;
-  background: transparent;
-  color: var(--muted);
-}
-
-.ui-button-ghost:hover:not(:disabled) {
-  background: hsl(220 10% 16%);
-  color: var(--text);
-}
-
-.ui-switch-row {
-  display: inline-flex;
-  height: 2rem;
-  align-items: center;
-  gap: 0.5rem;
-  border: 1px solid hsl(217 19% 24%);
-  border-radius: 7px;
-  background: hsl(220 10% 14%);
-  color: hsl(210 20% 86%);
-  padding: 0 0.65rem;
-  font-size: 0.8125rem;
-}
-
-.ui-switch-row:hover {
-  background: hsl(220 10% 18%);
-}
-
-.ui-switch {
-  display: inline-flex;
-  width: 1.55rem;
-  height: 0.9rem;
-  align-items: center;
-  border-radius: 999px;
-  background: hsl(217 19% 27%);
-  padding: 0.1rem;
-  transition: background 120ms ease;
-}
-
-.ui-switch[data-state="checked"] {
-  background: hsl(221 83% 58%);
-}
-
-.ui-switch-thumb {
-  width: 0.7rem;
-  height: 0.7rem;
-  border-radius: 999px;
-  background: white;
-  transition: transform 120ms ease;
-}
-
-.ui-switch[data-state="checked"] .ui-switch-thumb {
-  transform: translateX(0.65rem);
-}
-
-.ui-switch-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
 }
 
 .tracker-timeline {
@@ -994,9 +901,9 @@ tbody tr:hover td {
 }
 
 .badge.stale {
-  color: var(--warning);
-  border-color: rgba(224, 164, 88, 0.3);
-  background: rgba(224, 164, 88, 0.08);
+  color: var(--danger);
+  border-color: rgba(224, 112, 126, 0.35);
+  background: rgba(224, 112, 126, 0.1);
 }
 
 .badge.warning {
@@ -1092,7 +999,7 @@ tbody tr:hover td {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .tracker-view-toggle .ui-button {
+  .tracker-view-toggle [data-slot="button"] {
     width: 100%;
   }
 
@@ -1134,7 +1041,7 @@ tbody tr:hover td {
     justify-content: stretch;
   }
 
-  .tracker-timeline-actions .ui-button {
+  .tracker-timeline-actions [data-slot="button"] {
     width: 100%;
   }
 
@@ -1213,8 +1120,8 @@ button.tracker-map-legend-toggle:not([data-slot]):hover {
   }
 
   .tracker-map-control-btn {
-    width: 2.7rem;
-    height: 2.7rem;
+    width: 2.75rem;
+    height: 2.75rem;
     border-radius: 10px;
     background: rgba(12, 13, 16, 0.78);
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
@@ -1258,5 +1165,12 @@ button.tracker-map-legend-toggle:not([data-slot]):hover {
     min-height: 320px;
     border-color: transparent;
     background: transparent;
+  }
+}
+
+@media (pointer: coarse) {
+  .tracker-map-control-btn {
+    width: 2.75rem;
+    height: 2.75rem;
   }
 }

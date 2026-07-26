@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { clsx } from "clsx";
 import { Clock3, Pause, Play, RotateCcw, SunMoon } from "lucide-react";
 import { buildGroundTrack, computeOrbitSnapshot } from "@/shared/propagation/engine";
 import type { GroundTrackPoint } from "@/shared/types";
@@ -132,7 +133,8 @@ export function TrackerPage() {
     toggleWatchlist,
     refreshSelectedSatellite,
     getSatelliteColor,
-    setSatelliteColor
+    setSatelliteColor,
+    setPage
   } = useApp();
   const visibleSatellites = useMemo(() => {
     if (watchlistIds.length > 0) {
@@ -426,6 +428,9 @@ export function TrackerPage() {
     } else if (event.key === "Home") {
       event.preventDefault();
       setTimelineOffset(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setTimelineOffset(timelineRange.max);
     }
   }
 
@@ -443,6 +448,11 @@ export function TrackerPage() {
             ? `Could not propagate ${focusSatellite?.name ?? "the selected satellite"}. Its orbital elements may be stale or the object may have decayed - try refreshing the TLE from Details, or select another satellite.`
             : "Add a satellite in Catalog to start live tracking."}
         </p>
+        {!propagationFailed ? (
+          <Button className="mt-4" onClick={() => setPage("catalog")}>
+            Open Catalog
+          </Button>
+        ) : null}
       </div>
     );
   }
@@ -489,12 +499,18 @@ export function TrackerPage() {
       </div>
 
       <div className="tracker-satellite-list flex flex-wrap gap-2">
-        {displayedTrackedSatellites.map((satellite) => (
+        {displayedTrackedSatellites.map((satellite) => {
+          const selected = satellite.id === focusSatellite.id;
+          return (
           <div
             key={satellite.id}
-            className="tracker-satellite-pill flex cursor-pointer items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]"
+            className={clsx(
+              "tracker-satellite-pill flex cursor-pointer items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]",
+              selected && "selected"
+            )}
             role="button"
             tabIndex={0}
+            aria-pressed={selected}
             title="Inspect this satellite"
             onClick={() => inspectSatellite(satellite.id)}
             onKeyDown={(event) => {
@@ -530,7 +546,8 @@ export function TrackerPage() {
               <span className="text-xs text-[var(--faint)]">selected</span>
             )}
           </div>
-        ))}
+          );
+        })}
         {trackedSatellites.length > COLLAPSED_TRACKED_LIST_COUNT ? (
           <Button
             className="tracker-satellite-more"
