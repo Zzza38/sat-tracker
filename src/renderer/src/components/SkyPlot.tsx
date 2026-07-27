@@ -18,6 +18,19 @@ export function SkyPlot({
   const center = size / 2;
   const radius = size / 2 - 24;
   const colorOptions = { minElevationDeg, maxElevationDeg: 90 };
+  const compassLabels = [
+    { label: "N", x: center, y: 20 },
+    { label: "E", x: size - 16, y: center + 4 },
+    { label: "S", x: center, y: size - 12 },
+    { label: "W", x: 16, y: center + 4 }
+  ];
+
+  const formatTime = (timestamp: string) =>
+    new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short"
+    }).format(new Date(timestamp).getTime());
 
   const project = (azimuthDeg: number, elevationDeg: number) => {
     const azimuth = ((azimuthDeg - 90) * Math.PI) / 180;
@@ -35,7 +48,7 @@ export function SkyPlot({
   }));
 
   return (
-    <svg viewBox={`0 0 ${size} ${size}`} className="h-[320px] w-full" role="img" aria-label="Pass sky plot">
+    <svg viewBox={`0 0 ${size} ${size}`} className="mx-auto block h-auto w-full max-w-[420px]" role="img" aria-label="Pass sky plot">
       <rect width={size} height={size} rx="10" fill="#0c0d10" stroke="rgba(255,255,255,0.07)" />
       {[0, 30, 60, 90].map((ring) => (
         <circle
@@ -48,6 +61,34 @@ export function SkyPlot({
         />
       ))}
       <circle cx={center} cy={center} r={horizonRadius} fill="none" stroke="rgba(224,164,88,0.5)" strokeDasharray="5 5" />
+      {[30, 60].map((ring) => (
+        <text
+          key={ring}
+          x={center + 5}
+          y={center - ((90 - ring) / 90) * radius + 12}
+          fill="var(--faint)"
+          fontSize="10"
+          paintOrder="stroke"
+          stroke="#0c0d10"
+          strokeWidth="3"
+        >
+          {ring}°
+        </text>
+      ))}
+      {minElevationDeg > 0 ? (
+        <text
+          x={center + horizonRadius}
+          y={center - 6}
+          textAnchor="middle"
+          fill="rgba(224,164,88,0.9)"
+          fontSize="10"
+          paintOrder="stroke"
+          stroke="#0c0d10"
+          strokeWidth="3"
+        >
+          {minElevationDeg}° mask
+        </text>
+      ) : null}
       <line x1={center} y1={24} x2={center} y2={size - 24} stroke="rgba(255,255,255,0.07)" />
       <line x1={24} y1={center} x2={size - 24} y2={center} stroke="rgba(255,255,255,0.07)" />
 
@@ -72,13 +113,17 @@ export function SkyPlot({
             );
           })}
           {samplePoints.map(({ sample, point }) => (
-            <circle
-              key={sample.timestamp}
-              cx={point.x}
-              cy={point.y}
-              r="2.5"
-              fill={elevationToColor(sample.elevationDeg, colorOptions)}
-            />
+            <g key={sample.timestamp}>
+              <circle cx={point.x} cy={point.y} r="7" fill="transparent" />
+              <circle
+                cx={point.x}
+                cy={point.y}
+                r="2.5"
+                fill={elevationToColor(sample.elevationDeg, colorOptions)}
+                pointerEvents="none"
+              />
+              <title>{`${formatTime(sample.timestamp)} · az ${sample.azimuthDeg.toFixed(0)}° · el ${sample.elevationDeg.toFixed(0)}°`}</title>
+            </g>
           ))}
         </>
       ) : (
@@ -92,13 +137,22 @@ export function SkyPlot({
             strokeWidth="2.5"
           />
           {samplePoints.map(({ sample, point }) => (
-            <circle key={sample.timestamp} cx={point.x} cy={point.y} r="2.5" fill={satelliteColor} />
+            <g key={sample.timestamp}>
+              <circle cx={point.x} cy={point.y} r="7" fill="transparent" />
+              <circle cx={point.x} cy={point.y} r="2.5" fill={satelliteColor} pointerEvents="none" />
+              <title>{`${formatTime(sample.timestamp)} · az ${sample.azimuthDeg.toFixed(0)}° · el ${sample.elevationDeg.toFixed(0)}°`}</title>
+            </g>
           ))}
         </>
       )}
 
-      <text x={center} y={20} textAnchor="middle" fill="#6c7079" fontSize="12">
-        N
+      {compassLabels.map(({ label, x, y }) => (
+        <text key={label} x={x} y={y} textAnchor="middle" fill="var(--faint)" fontSize="12">
+          {label}
+        </text>
+      ))}
+      <text x={center} y={center - 5} textAnchor="middle" fill="var(--faint)" fontSize="10">
+        Zenith
       </text>
     </svg>
   );

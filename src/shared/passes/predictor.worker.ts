@@ -18,10 +18,30 @@ interface PredictRequest {
 // The bulk predictor shares a single WASM runtime, which is not safe to run
 // concurrently. Chain incoming jobs so overlapping requests run one at a time.
 let jobQueue: Promise<void> = Promise.resolve();
+// Only the most recently enqueued request is worth running; anything older is
+// superseded and is dropped at the head of the queue so a stale drag/commit
+// doesn't burn a full WASM propagation.
+let latestId = -1;
 
-self.onmessage = (event: MessageEvent<PredictRequest>) => {
-  const { id, records, observer, options, stream } = event.data;
+type WorkerMessage =
+  | PredictRequest
+  | { type: "cancel"; id: number };
+
+self.onmessage = (event: MessageEvent<WorkerMessage>) => {
+  const data = event.data;
+
+  if (data && (data as { type?: string }).type === "cancel") {
+    // A cancelled id is no longer the latest, so the guard below skips it.
+    return;
+  }
+
+  const { id, records, observer, options, stream } = data as PredictRequest;
+  latestId = id;
   jobQueue = jobQueue.then(async () => {
+    if (id !== latestId) {
+      self.postMessage({ id, type: "complete", passes: [] });
+      return;
+    }
     try {
       const passes = await predictPassesBulkWasm(records, observer, {
         ...options,

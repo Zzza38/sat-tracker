@@ -33,14 +33,18 @@ const UI_STORAGE_KEY = "sat-tracker-ui";
 
 function readUiState(): StoredUiState {
   try {
-    return JSON.parse(sessionStorage.getItem(UI_STORAGE_KEY) ?? "{}") as StoredUiState;
+    return JSON.parse(localStorage.getItem(UI_STORAGE_KEY) ?? "{}") as StoredUiState;
   } catch {
     return {};
   }
 }
 
 function writeUiState(partial: StoredUiState) {
-  sessionStorage.setItem(UI_STORAGE_KEY, JSON.stringify({ ...readUiState(), ...partial }));
+  try {
+    localStorage.setItem(UI_STORAGE_KEY, JSON.stringify({ ...readUiState(), ...partial }));
+  } catch {
+    /* restricted environments */
+  }
 }
 
 function normalizePage(page: unknown): Page {
@@ -67,17 +71,20 @@ interface AppContextValue {
   trackerPreviewRequest: TrackerPreviewRequest | null;
   bootstrapping: boolean;
   catalogSyncing: boolean;
+  refreshingSelected: boolean;
   error: string | null;
   clearError: () => void;
   refreshCatalog: (options?: { silent?: boolean }) => Promise<void>;
   selectSatellite: (id: string | null) => void;
   selectPass: (pass: PassPrediction | null) => void;
   previewPassOnTracker: (pass: PassPrediction) => void;
+  clearTrackerPreviewRequest: () => void;
   addManualTle: (raw: string) => Promise<void>;
   addNorad: (noradId: string) => Promise<void>;
   addNoradBulk: (raw: string) => Promise<{
     added: SatelliteRecord[];
     failures: Array<{ id: string; error: string }>;
+    ignored: string[];
   }>;
   importTleSource: (sourceId: string) => Promise<void>;
   refreshSelectedSatellite: () => Promise<void>;
@@ -170,7 +177,7 @@ function chooseDefaultSatelliteId(records: SatelliteRecord[], watchlistIds: stri
     return null;
   }
 
-  return records[Math.floor(Math.random() * records.length)]?.id ?? null;
+  return records[0]?.id ?? null;
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -192,6 +199,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [trackerPreviewRequest, setTrackerPreviewRequest] = useState<TrackerPreviewRequest | null>(null);
   const [bootstrapping, setBootstrapping] = useState(true);
   const [catalogSyncing, setCatalogSyncing] = useState(false);
+  const [refreshingSelected, setRefreshingSelected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bootstrappedRef = useRef(false);
   const observerSelectionEpochRef = useRef(0);
@@ -298,9 +306,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         autoRefreshPromise = sourceImportPromise
           .then(updateCatalogFromCache)
           .catch((caught) => {
-            if (records.length === 0) {
-              setError(caught instanceof Error ? caught.message : "Failed to load catalog.");
-            }
+            const message = caught instanceof Error ? caught.message : "Failed to load catalog.";
+            setError(records.length === 0 ? message : `Background refresh failed: ${message} Showing cached data.`);
           })
           .finally(() => {
             autoRefreshPromise = null;
@@ -366,12 +373,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     trackerPreviewRequest,
     bootstrapping,
     catalogSyncing,
+    refreshingSelected,
     error,
     clearError: () => setError(null),
     refreshCatalog,
     selectSatellite,
     selectPass: setSelectedPass,
     previewPassOnTracker,
+    clearTrackerPreviewRequest: () => setTrackerPreviewRequest(null),
     addManualTle: async (raw) => {
       const record = await addManualElements(raw);
       await ensureTracked(record.id);
@@ -404,11 +413,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await refreshCatalog({ silent: true });
     },
     refreshSelectedSatellite: async () => {
-      if (!selectedSatelliteId) {
+      if (!selectedSatelliteId || refreshingSelected) {
         return;
       }
-      await refreshSatellite(selectedSatelliteId);
-      await refreshCatalog({ silent: true });
+      setRefreshingSelected(true);
+      try {
+        await refreshSatellite(selectedSatelliteId);
+        await refreshCatalog({ silent: true });
+      } finally {
+        setRefreshingSelected(false);
+      }
     },
     toggleWatchlist: async (satelliteId) => {
       const ids = await toggleWatchlistSatellite("default", satelliteId);
@@ -505,6 +519,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     observers,
     page,
     passes,
+    refreshingSelected,
     selectedPass,
     selectedSatellite,
     selectedSatelliteId,

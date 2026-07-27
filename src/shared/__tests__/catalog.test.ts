@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseNoradIds } from "@/shared/catalog/service";
+import { parseNoradIds, parseNoradIdsDetailed } from "@/shared/catalog/service";
 import { formatDuration } from "@/shared/utils/date";
 
 describe("catalog helpers", () => {
@@ -8,6 +8,13 @@ describe("catalog helpers", () => {
       "25544",
       "43013"
     ]);
+  });
+
+  it("reports ignored tokens separately from valid NORAD IDs", () => {
+    expect(parseNoradIdsDetailed("25544, 25544\n43013 0 -1 1234567890 abc")).toEqual({
+      ids: ["25544", "43013"],
+      ignored: ["0", "-1", "1234567890", "abc"]
+    });
   });
 
   it("formats rounded durations without a 60-second remainder", () => {
