@@ -61,11 +61,15 @@ function createWindow() {
     icon: appIconPath(),
     frame: true,
     titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: "#0c0d10",
-      symbolColor: "#f4f7fb",
-      height: 42
-    },
+    ...(process.platform === "darwin"
+      ? { trafficLightPosition: { x: 14, y: 13 } }
+      : {
+          titleBarOverlay: {
+            color: "#0c0d10",
+            symbolColor: "#f4f7fb",
+            height: 42
+          }
+        }),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.mjs"),

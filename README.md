@@ -94,7 +94,7 @@ Packaged desktop builds output platform artifacts to `release/`.
 2. Add satellites in **Catalog** by NORAD ID, manual TLE paste, or CelesTrak group import.
 3. Use **Passes** to compute upcoming visible passes for your watchlist.
 4. Open **Tracker** for live position and ground track visualization.
-5. Use **Details** for orbital elements, current look angles, and next passes.
+5. Use **Details** for orbital elements and current look angles.
 
 ## Notes
 

@@ -48,6 +48,7 @@ export function PassesPage() {
   const computeRequestRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [days, setDays] = useState(7);
+  const [daysDraft, setDaysDraft] = useState(7);
   const [error, setError] = useState<string | null>(null);
   const [computeProgress, setComputeProgress] = useState<{ completed: number; total: number } | null>(null);
   const [colorByElevation, setColorByElevation] = useState(readColorByElevationPreference);
@@ -78,7 +79,7 @@ export function PassesPage() {
     return () => window.removeEventListener(REMINDERS_CHANGED_EVENT, refresh);
   }, []);
 
-  const computePasses = useCallback(async () => {
+  const computePasses = useCallback(async (predictionDays: number) => {
     const requestId = computeRequestRef.current + 1;
     computeRequestRef.current = requestId;
     const streamedPasses: typeof passes = [];
@@ -98,7 +99,7 @@ export function PassesPage() {
 
       setComputeProgress({ completed: 0, total: targets.length });
       const start = new Date(Math.floor(Date.now() / 60000) * 60000);
-      const end = new Date(start.getTime() + days * 86400000);
+      const end = new Date(start.getTime() + predictionDays * 86400000);
       const results = await predictPassesBulkStreaming(
         targets,
         observer,
@@ -141,11 +142,21 @@ export function PassesPage() {
         setComputeProgress(null);
       }
     }
-  }, [days, observer, selectPass, setPasses, visiblePassTargets]);
+  }, [observer, selectPass, setPasses, visiblePassTargets]);
 
   useEffect(() => {
-    void computePasses();
-  }, [computePasses]);
+    // Auto-compute only after the slider commits so dragging does not spam predictions.
+    void computePasses(days);
+  }, [computePasses, days]);
+
+  function handleComputePasses() {
+    // The label/slider show daysDraft; commit it so prediction matches the visible window.
+    if (daysDraft !== days) {
+      setDays(daysDraft);
+      return;
+    }
+    void computePasses(daysDraft);
+  }
 
   const selectedPassSatelliteColor = selectedPass
     ? getSatelliteColor(selectedPass.satelliteId, visibleSatelliteIds)
@@ -210,14 +221,15 @@ export function PassesPage() {
                 min={1}
                 max={14}
                 step={1}
-                value={[days]}
+                value={[daysDraft]}
                 aria-label="Pass prediction window"
-                onValueChange={([value]) => setDays(value ?? 7)}
+                onValueChange={([value]) => setDaysDraft(value ?? 7)}
+                onValueCommit={([value]) => setDays(value ?? 7)}
               />
-              <span className="mono text-right text-xs text-[var(--text)]">{days}d</span>
+              <span className="mono text-right text-xs text-[var(--text)]">{daysDraft}d</span>
             </div>
             <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-3">
-              <Button disabled={loading} onClick={() => void computePasses()}>
+              <Button disabled={loading} onClick={handleComputePasses}>
                 {loading ? "Computing..." : (
                   <>
                     <span className="sm:hidden">Compute</span>
@@ -345,16 +357,16 @@ export function PassesPage() {
               </tr>
             </thead>
             <tbody>
-              {passes.map((pass) => (
+              {passes.map((pass) => {
+                const selected =
+                  selectedPass?.satelliteId === pass.satelliteId && selectedPass.aos === pass.aos;
+                return (
                 <tr
                   key={`${pass.satelliteId}-${pass.aos}`}
-                  className={clsx(
-                    "cursor-pointer",
-                    selectedPass?.satelliteId === pass.satelliteId &&
-                      selectedPass.aos === pass.aos &&
-                      "bg-[var(--accent-soft)]"
-                  )}
+                  className={clsx("cursor-pointer", selected && "bg-[var(--accent-soft)]")}
                   tabIndex={0}
+                  aria-selected={selected}
+                  aria-label={`${pass.satelliteName} pass. Enter to inspect geometry.`}
                   onClick={() => selectPass(pass)}
                   onDoubleClick={() => inspectPass(pass)}
                   onKeyDown={(event) => {
@@ -363,7 +375,7 @@ export function PassesPage() {
                       inspectPass(pass);
                     }
                   }}
-                  title="Double-click to inspect pass geometry"
+                  title="Click to select, Enter or double-click to inspect geometry"
                 >
                   <td>
                     <span className="inline-flex items-center gap-2">
@@ -401,7 +413,8 @@ export function PassesPage() {
                     </Button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {!loading && passes.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-sm text-[var(--muted)]">

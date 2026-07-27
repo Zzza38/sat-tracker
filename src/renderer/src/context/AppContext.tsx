@@ -84,6 +84,7 @@ interface AppContextValue {
   toggleWatchlist: (satelliteId: string) => Promise<string[]>;
   selectObserver: (observerId: string) => Promise<void>;
   updateObserver: (observer: ObserverSite) => Promise<void>;
+  deleteObserver: (observerId: string) => Promise<void>;
   updateSettings: (partial: Partial<Awaited<ReturnType<typeof getSettings>>>) => Promise<void>;
   getSatelliteColor: (satelliteId: string, orderedIds: string[]) => string;
   setSatelliteColor: (satelliteId: string, color: string) => Promise<void>;
@@ -193,6 +194,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [catalogSyncing, setCatalogSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bootstrappedRef = useRef(false);
+  const observerSelectionEpochRef = useRef(0);
 
   const setPage = (nextPage: Page) => {
     setPageState(nextPage);
@@ -414,23 +416,68 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return ids;
     },
     selectObserver: async (observerId) => {
+      const selectionEpoch = ++observerSelectionEpochRef.current;
       const nextObserver = await db.observers.get(observerId);
       if (!nextObserver) {
         throw new Error("Observer not found.");
       }
       await saveSettings({ activeObserverId: observerId });
+      if (selectionEpoch !== observerSelectionEpochRef.current) {
+        return;
+      }
       const nextSettings = await getSettings();
       setSettings(nextSettings);
       setObserver(nextObserver);
       setObservers(await db.observers.toArray());
     },
     updateObserver: async (nextObserver) => {
+      // Capture selection epoch so a save that started before a switch cannot
+      // overwrite the newly selected observer in React state.
+      const selectionEpoch = observerSelectionEpochRef.current;
       await db.observers.put(nextObserver);
-      await saveSettings({ activeObserverId: nextObserver.id });
-      const nextSettings = await getSettings();
-      setObserver(nextObserver);
-      setSettings(nextSettings);
       setObservers(await db.observers.toArray());
+      const currentSettings = await getSettings();
+      // Persist the record only. Never force activeObserverId here — selection
+      // changes go through selectObserver / deleteObserver.
+      if (
+        selectionEpoch !== observerSelectionEpochRef.current ||
+        currentSettings.activeObserverId !== nextObserver.id
+      ) {
+        return;
+      }
+      setObserver(nextObserver);
+    },
+    deleteObserver: async (observerId) => {
+      const selectionEpoch = ++observerSelectionEpochRef.current;
+      const currentObservers = await db.observers.toArray();
+      if (currentObservers.length <= 1) {
+        throw new Error("At least one observer is required.");
+      }
+
+      const target = currentObservers.find((entry) => entry.id === observerId);
+      if (!target) {
+        throw new Error("Observer not found.");
+      }
+
+      await db.observers.delete(observerId);
+      const remaining = await db.observers.toArray();
+      const nextActive =
+        settings?.activeObserverId === observerId
+          ? remaining[0]
+          : remaining.find((entry) => entry.id === settings?.activeObserverId) ?? remaining[0];
+
+      if (!nextActive) {
+        throw new Error("At least one observer is required.");
+      }
+
+      await saveSettings({ activeObserverId: nextActive.id });
+      if (selectionEpoch !== observerSelectionEpochRef.current) {
+        return;
+      }
+      const nextSettings = await getSettings();
+      setObserver(nextActive);
+      setSettings(nextSettings);
+      setObservers(remaining);
     },
     updateSettings: async (partial) => {
       await saveSettings(partial);

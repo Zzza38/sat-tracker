@@ -108,6 +108,22 @@ function parseObserverDraft(draft: ObserverDraft) {
   };
 }
 
+function matchCityPreset(draft: ObserverDraft) {
+  const latitude = Number(draft.latitude);
+  const longitude = Number(draft.longitude);
+  const altitudeM = Number(draft.altitudeM);
+  if (![latitude, longitude, altitudeM].every(Number.isFinite)) {
+    return undefined;
+  }
+
+  return CITY_PRESETS.find(
+    (city) =>
+      Math.abs(city.latitude - latitude) < 0.0001 &&
+      Math.abs(city.longitude - longitude) < 0.0001 &&
+      Math.abs(city.altitudeM - altitudeM) < 0.5
+  )?.id;
+}
+
 export function SettingsPage() {
   const {
     observer,
@@ -116,6 +132,7 @@ export function SettingsPage() {
     settings,
     selectObserver,
     updateObserver,
+    deleteObserver,
     updateSettings,
     refreshCatalog
   } = useApp();
@@ -125,7 +142,13 @@ export function SettingsPage() {
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [importStatusIsError, setImportStatusIsError] = useState(false);
   const [importingAll, setImportingAll] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [cityPresetId, setCityPresetId] = useState<string | undefined>(() =>
+    matchCityPreset(observerToDraft(observer))
+  );
   const observerDirtyRef = useRef(false);
+  const observerSaveTimeoutRef = useRef<number | undefined>(undefined);
+  const observerSaveEpochRef = useRef(0);
   const sourceUrlsDirtyRef = useRef(false);
   const [refreshIntervalDraft, setRefreshIntervalDraft] = useState(String(settings.refreshIntervalValue));
   const [sourceUrls, setSourceUrls] = useState(() =>
@@ -133,11 +156,28 @@ export function SettingsPage() {
   );
   const observerValidation = useMemo(() => parseObserverDraft(draft), [draft]);
 
+  function discardPendingObserverSave() {
+    if (observerSaveTimeoutRef.current !== undefined) {
+      window.clearTimeout(observerSaveTimeoutRef.current);
+      observerSaveTimeoutRef.current = undefined;
+    }
+    observerSaveEpochRef.current += 1;
+    observerDirtyRef.current = false;
+  }
+
   useEffect(() => {
     if (!observerDirtyRef.current) {
-      setDraft(observerToDraft(observer));
+      const nextDraft = observerToDraft(observer);
+      setDraft(nextDraft);
+      setCityPresetId(matchCityPreset(nextDraft));
     }
   }, [observer]);
+
+  useEffect(() => {
+    if (observerDirtyRef.current) {
+      setCityPresetId(matchCityPreset(draft));
+    }
+  }, [draft]);
 
   useEffect(() => {
     if (!observerDirtyRef.current) {
@@ -150,15 +190,32 @@ export function SettingsPage() {
       return;
     }
 
-    const timeout = window.setTimeout(() => {
-      void updateObserver(observerValidation.observer).then(() => {
+    const saveEpoch = observerSaveEpochRef.current;
+    const observerToSave = observerValidation.observer;
+    observerSaveTimeoutRef.current = window.setTimeout(() => {
+      observerSaveTimeoutRef.current = undefined;
+      // Bail if the user switched observers or discarded this draft before the timer fired.
+      if (!observerDirtyRef.current || observerSaveEpochRef.current !== saveEpoch) {
+        return;
+      }
+
+      void updateObserver(observerToSave).then(() => {
+        // Ignore completions from a previous observer after a switch/create/delete.
+        if (observerSaveEpochRef.current !== saveEpoch) {
+          return;
+        }
         observerDirtyRef.current = false;
         setSavedIsError(false);
         setSaved("Observer saved.");
       });
     }, 450);
 
-    return () => window.clearTimeout(timeout);
+    return () => {
+      if (observerSaveTimeoutRef.current !== undefined) {
+        window.clearTimeout(observerSaveTimeoutRef.current);
+        observerSaveTimeoutRef.current = undefined;
+      }
+    };
   }, [observerValidation, updateObserver]);
 
   useEffect(() => {
@@ -171,28 +228,17 @@ export function SettingsPage() {
     setRefreshIntervalDraft(String(settings.refreshIntervalValue));
   }, [settings.refreshIntervalValue]);
 
-  async function save() {
-    if (observerValidation.errors.length > 0) {
-      setSavedIsError(true);
-      setSaved(observerValidation.errors[0]);
-      return;
-    }
-
-    await updateObserver(observerValidation.observer);
-    observerDirtyRef.current = false;
-    setSavedIsError(false);
-    setSaved("Observer saved.");
-  }
-
   async function chooseCityPreset(presetId: string) {
     const preset = CITY_PRESETS.find((city) => city.id === presetId);
     if (!preset) {
       return;
     }
 
-    observerDirtyRef.current = false;
+    discardPendingObserverSave();
+    setCityPresetId(preset.id);
     const nextObserver = {
       ...preset,
+      id: draft.id,
       minElevationDeg: draft.minElevationDeg
     };
     setDraft(observerToDraft(nextObserver));
@@ -207,11 +253,31 @@ export function SettingsPage() {
       id: `observer-${Date.now().toString(36)}`,
       name: "New observer"
     };
-    observerDirtyRef.current = false;
+    discardPendingObserverSave();
+    setCityPresetId(matchCityPreset(observerToDraft(nextObserver)));
     setDraft(observerToDraft(nextObserver));
     await updateObserver(nextObserver);
+    await selectObserver(nextObserver.id);
     setSavedIsError(false);
     setSaved("New observer created.");
+  }
+
+  async function removeObserver() {
+    if (observers.length <= 1) {
+      setSavedIsError(true);
+      setSaved("At least one observer is required.");
+      return;
+    }
+
+    try {
+      discardPendingObserverSave();
+      await deleteObserver(draft.id);
+      setSavedIsError(false);
+      setSaved("Observer deleted.");
+    } catch (caught) {
+      setSavedIsError(true);
+      setSaved(caught instanceof Error ? caught.message : "Could not delete observer.");
+    }
   }
 
   async function updateTleSources(nextSources: TleSource[]) {
@@ -279,9 +345,13 @@ export function SettingsPage() {
     const value = Number(refreshIntervalDraft);
     if (!Number.isFinite(value) || value < 1) {
       setRefreshIntervalDraft(String(settings.refreshIntervalValue));
+      setSavedIsError(true);
+      setSaved("Refresh interval must be at least 1.");
       return;
     }
     await updateSettings({ refreshIntervalValue: value });
+    setSavedIsError(false);
+    setSaved(null);
   }
 
   const staleAfterHours = refreshIntervalToHours(
@@ -303,7 +373,7 @@ export function SettingsPage() {
               <Select
                 value={activeObserverId}
                 onValueChange={(observerId) => {
-                  observerDirtyRef.current = false;
+                  discardPendingObserverSave();
                   setSaved(null);
                   void selectObserver(observerId);
                 }}
@@ -327,7 +397,11 @@ export function SettingsPage() {
 
           <label className="block space-y-1.5">
             <span className="text-xs font-medium text-[var(--faint)]">City or town preset</span>
-            <Select onValueChange={(presetId) => void chooseCityPreset(presetId)}>
+            <Select
+              key={cityPresetId ?? `custom-${draft.id}`}
+              value={cityPresetId}
+              onValueChange={(presetId) => void chooseCityPreset(presetId)}
+            >
               <SelectTrigger className="h-[42px] border-[var(--line-strong)] bg-[var(--bg)]">
                 <SelectValue placeholder="Choose a preset..." />
               </SelectTrigger>
@@ -395,32 +469,50 @@ export function SettingsPage() {
           </label>
         </div>
 
-        <div className="mt-5 flex gap-2">
-          <Button className="w-[132px]" onClick={() => void save()}>
-            Save Observer
-          </Button>
+        <div className="mt-5 flex flex-wrap gap-2">
           <Button
-            className="w-[180px]"
+            className="min-w-[180px]"
             variant="secondary"
+            disabled={locating}
             onClick={() => {
-              navigator.geolocation.getCurrentPosition((position) => {
-                observerDirtyRef.current = true;
-                setSaved(null);
-                setDraft((current) => ({
-                  ...current,
-                  latitude: String(position.coords.latitude),
-                  longitude: String(position.coords.longitude),
-                  altitudeM: String(position.coords.altitude ?? current.altitudeM)
-                }));
-              }, (error) => {
+              if (!navigator.geolocation) {
                 setSavedIsError(true);
-                setSaved(error.message || "Browser location permission was denied.");
-              });
+                setSaved("Browser geolocation is unavailable.");
+                return;
+              }
+
+              setLocating(true);
+              navigator.geolocation.getCurrentPosition(
+                (position) => {
+                  observerDirtyRef.current = true;
+                  setSaved(null);
+                  setDraft((current) => ({
+                    ...current,
+                    latitude: String(position.coords.latitude),
+                    longitude: String(position.coords.longitude),
+                    altitudeM: String(position.coords.altitude ?? current.altitudeM)
+                  }));
+                  setLocating(false);
+                },
+                (error) => {
+                  setLocating(false);
+                  setSavedIsError(true);
+                  setSaved(error.message || "Browser location permission was denied.");
+                }
+              );
             }}
           >
-            Use browser location
+            {locating ? "Locating..." : "Use browser location"}
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={observers.length <= 1}
+            onClick={() => void removeObserver()}
+          >
+            Delete observer
           </Button>
         </div>
+        <p className="mt-3 text-xs text-[var(--muted)]">Observer changes save automatically.</p>
 
         {saved ? <p className={`mono mt-4 text-sm ${savedIsError ? "text-[var(--danger)]" : "text-[var(--accent)]"}`}>{saved}</p> : null}
       </section>
