@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "cesium/Build/Cesium/Widgets/widgets.css";
+import { Loader2 } from "lucide-react";
+import { Button } from "./ui/button";
 import { createWorldMapTextureDataUrl } from "./worldMap";
 import type { TrackedSatelliteView } from "./Map2D";
 
@@ -9,6 +11,7 @@ interface Globe3DProps {
   currentTime: Date;
   showSunMoon: boolean;
   onSatelliteDoubleClick?: (satelliteId: string) => void;
+  onFallbackTo2D?: () => void;
 }
 
 const EARTH_RADIUS_M = 6371000;
@@ -246,7 +249,8 @@ export function Globe3D({
   satellites,
   currentTime,
   showSunMoon,
-  onSatelliteDoubleClick
+  onSatelliteDoubleClick,
+  onFallbackTo2D
 }: Globe3DProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<any>(null);
@@ -261,6 +265,8 @@ export function Globe3D({
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const preUpdateHandlerRef = useRef<(() => void) | null>(null);
   const doubleClickHandlerRef = useRef<any>(null);
+  const clickHandlerRef = useRef<any>(null);
+  const mouseMoveHandlerRef = useRef<any>(null);
 
   const satellitesRef = useRef(satellites);
   const satelliteByIdRef = useRef(new Map(satellites.map((satellite) => [satellite.id, satellite])));
@@ -278,6 +284,8 @@ export function Globe3D({
   const structureKey = entityStructureKey(satellites);
   const footprintKey = footprintUpdateKey(satellites);
   const [viewerReady, setViewerReady] = useState(false);
+  const [bootError, setBootError] = useState(false);
+  const [bootAttempt, setBootAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -286,6 +294,10 @@ export function Globe3D({
       if (!containerRef.current || viewerRef.current) {
         return;
       }
+
+      // Clear any partial DOM left behind by a failed construction so retry is safe.
+      containerRef.current.replaceChildren();
+      viewerRef.current = null;
 
       const Cesium = await import("cesium");
       if (cancelled || !containerRef.current) {
@@ -406,6 +418,26 @@ export function Globe3D({
       }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
       doubleClickHandlerRef.current = doubleClickHandler;
 
+      const clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+      clickHandler.setInputAction((movement: { position: any }) => {
+        const picked = viewer.scene.pick(movement.position);
+        const pickedId = typeof picked?.id?.id === "string" ? picked.id.id : undefined;
+        const satelliteId = pickedId ? satelliteIdFromEntityId(pickedId) : null;
+        if (satelliteId) {
+          onSatelliteDoubleClickRef.current?.(satelliteId);
+        }
+      }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+      clickHandlerRef.current = clickHandler;
+
+      const mouseMoveHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+      mouseMoveHandler.setInputAction((movement: { endPosition: any }) => {
+        const picked = viewer.scene.pick(movement.endPosition);
+        const pickedId = typeof picked?.id?.id === "string" ? picked.id.id : undefined;
+        viewer.canvas.style.cursor =
+          pickedId && satelliteIdFromEntityId(pickedId) ? "pointer" : "";
+      }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+      mouseMoveHandlerRef.current = mouseMoveHandler;
+
       viewer.resize();
 
       const observerEl = new ResizeObserver(() => {
@@ -421,7 +453,10 @@ export function Globe3D({
       }
     }
 
-    void boot();
+    boot().catch((error) => {
+      console.error("3D globe failed to start:", error);
+      if (!cancelled) setBootError(true);
+    });
 
     return () => {
       cancelled = true;
@@ -433,6 +468,10 @@ export function Globe3D({
       preUpdateHandlerRef.current = null;
       doubleClickHandlerRef.current?.destroy?.();
       doubleClickHandlerRef.current = null;
+      clickHandlerRef.current?.destroy?.();
+      clickHandlerRef.current = null;
+      mouseMoveHandlerRef.current?.destroy?.();
+      mouseMoveHandlerRef.current = null;
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
       viewerRef.current?.destroy?.();
@@ -446,7 +485,13 @@ export function Globe3D({
       billboardStyleRef.current.clear();
       cameraTargetIdRef.current = null;
     };
-  }, []);
+  }, [bootAttempt]);
+
+  const handleRetry = () => {
+    setBootError(false);
+    setViewerReady(false);
+    setBootAttempt((attempt) => attempt + 1);
+  };
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -654,11 +699,36 @@ ${activeObserver.name}`;
   }, [footprintKey, viewerReady]);
 
   return (
-    <div
-      ref={containerRef}
-      className="h-[380px] w-full overflow-hidden rounded-[10px] border border-[var(--line)] sm:h-[460px] lg:h-[520px]"
-      role="img"
-      aria-label="Interactive 3D globe showing tracked satellites"
-    />
+    <div className="relative h-[380px] w-full overflow-hidden rounded-[10px] border border-[var(--line)] sm:h-[460px] lg:h-[520px]">
+      <div
+        ref={containerRef}
+        className="absolute inset-0"
+        role="img"
+        aria-label="Interactive 3D globe showing tracked satellites"
+      />
+      {bootError ? (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--surface)]/80 p-6 text-center">
+          <p className="text-sm font-medium text-[var(--text)]">3D globe could not start</p>
+          <p className="text-xs text-[var(--muted)]">WebGL may be unavailable or disabled in this environment.</p>
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={handleRetry}>
+              Retry
+            </Button>
+            {onFallbackTo2D ? (
+              <Button variant="default" size="sm" onClick={onFallbackTo2D}>
+                Back to 2D map
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : !viewerReady ? (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--surface)]/60">
+          <div className="flex items-center gap-2 text-sm text-[var(--muted)]" role="status">
+            <Loader2 size={16} className="animate-spin" />
+            Initializing 3D globe…
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }

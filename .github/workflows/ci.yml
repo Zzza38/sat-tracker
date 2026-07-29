@@ -13,11 +13,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npm install
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test
-      - run: npm run build
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
 
   package-desktop:
     name: package-${{ matrix.platform }}
@@ -29,20 +30,20 @@ jobs:
         include:
           - platform: windows
             os: windows-latest
-            command: npm run dist:win
+            command: pnpm dist:win
             artifact: sat-tracker-windows
             files: |
               release/*.exe
           - platform: macos
             os: macos-latest
-            command: npm run dist:mac
+            command: pnpm dist:mac
             artifact: sat-tracker-macos
             files: |
               release/*.dmg
               release/*.zip
           - platform: linux
             os: ubuntu-latest
-            command: npm run dist:linux
+            command: pnpm dist:linux
             artifact: sat-tracker-linux
             files: |
               release/*.AppImage
@@ -52,7 +53,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npm install
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
       - run: ${{ matrix.command }}
       - uses: actions/upload-artifact@v4
         with:

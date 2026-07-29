@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerE
 import { clsx } from "clsx";
 import { Clock3, Pause, Play, RotateCcw, SunMoon } from "lucide-react";
 import { buildGroundTrack, computeOrbitSnapshot } from "@/shared/propagation/engine";
-import type { GroundTrackPoint } from "@/shared/types";
-import { predictPassesForSatellite } from "@/shared/passes/predictor-core";
-import { formatDuration, formatTimestamp } from "@/shared/utils/date";
+import type { GroundTrackPoint, PassPrediction } from "@/shared/types";
+import { predictPassesBulkStreaming } from "@/shared/passes/predictor";
+import { formatDuration, formatTimestamp, formatTimestampCompact } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
 import { useTicker } from "../hooks/useTicker";
 import { Globe3D } from "../components/Globe3D";
@@ -18,6 +18,7 @@ const TRACK_WINDOW_MINUTES = 180;
 const TRACK_STEP_SECONDS = 60;
 const MEDIUM_TRACKED_COUNT = 12;
 const LARGE_TRACKED_COUNT = 30;
+const FAST_PLAYBACK_THRESHOLD = 8;
 const COLLAPSED_TRACKED_LIST_COUNT = 12;
 const INITIAL_TIMELINE_MIN_MINUTES = -180;
 const INITIAL_TIMELINE_MAX_MINUTES = 180;
@@ -100,7 +101,7 @@ function groundTrackStepSeconds(satelliteCount: number) {
 
 function readTrackerState() {
   try {
-    return JSON.parse(sessionStorage.getItem(TRACKER_STATE_KEY) ?? "{}") as {
+    return JSON.parse(localStorage.getItem(TRACKER_STATE_KEY) ?? "{}") as {
       currentTime?: string;
       live?: boolean;
       playing?: boolean;
@@ -125,16 +126,19 @@ export function TrackerPage() {
     watchlistIds,
     selectedSatellite,
     selectedSatelliteId,
+    selectedPass,
     observer,
     trackerViewMode,
     setTrackerViewMode,
     trackerPreviewRequest,
+    clearTrackerPreviewRequest,
+    setPage,
     selectSatellite,
     toggleWatchlist,
     refreshSelectedSatellite,
+    refreshingSelected,
     getSatelliteColor,
-    setSatelliteColor,
-    setPage
+    setSatelliteColor
   } = useApp();
   const visibleSatellites = useMemo(() => {
     if (watchlistIds.length > 0) {
@@ -164,8 +168,14 @@ export function TrackerPage() {
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(storedTrackerState.playbackSpeed ?? 1);
   const [showSunMoon, setShowSunMoon] = useState(storedTrackerState.showSunMoon ?? true);
   const [trackedListExpanded, setTrackedListExpanded] = useState(false);
-  const liveNow = useTicker(trackerLiveIntervalMs(visibleSatellites.length));
-  const playbackNow = useTicker(visibleSatellites.length > LARGE_TRACKED_COUNT ? 250 : 100);
+  const [globeMounted, setGlobeMounted] = useState(trackerViewMode === "3d");
+  const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
+  const [refreshIsError, setRefreshIsError] = useState(false);
+  const liveNow = useTicker(trackerLiveIntervalMs(visibleSatellites.length), timelineLive);
+  const playbackNow = useTicker(
+    visibleSatellites.length > LARGE_TRACKED_COUNT ? 250 : 100,
+    timelinePlaying && !timelineLive
+  );
   const previousPlaybackTickRef = useRef(playbackNow.getTime());
   const currentTime = useMemo(
     () =>
@@ -192,7 +202,7 @@ export function TrackerPage() {
   useEffect(() => {
     return () => {
       try {
-        sessionStorage.setItem(TRACKER_STATE_KEY, JSON.stringify(persistedStateRef.current));
+        localStorage.setItem(TRACKER_STATE_KEY, JSON.stringify(persistedStateRef.current));
       } catch {
         // Ignore storage failures in restricted environments.
       }
@@ -205,20 +215,49 @@ export function TrackerPage() {
     () => new Date(trackTimeKey * trackRefreshMs - (TRACK_WINDOW_MINUTES / 2) * 60000),
     [trackRefreshMs, trackTimeKey]
   );
-  const groundTracksById = useMemo(() => {
-    return new Map(
-      visibleSatellites.map((satellite) => {
+  const tracksPaused = timelinePlaying && playbackSpeed >= FAST_PLAYBACK_THRESHOLD;
+  const [groundTracksById, setGroundTracksById] = useState<Map<string, GroundTrackPoint[]>>(
+    () => new Map()
+  );
+  useEffect(() => {
+    // Freeze track refresh during fast playback; tracks resume when speed drops or playback stops.
+    if (tracksPaused) {
+      return;
+    }
+
+    let cancelled = false;
+    let index = 0;
+    // Spread the rebuild over ~4 frames so no single frame blocks >~30ms.
+    const chunkSize = Math.max(1, Math.ceil(visibleSatellites.length / 4));
+    const buildChunk = () => {
+      if (cancelled) {
+        return;
+      }
+
+      const additions = new Map<string, GroundTrackPoint[]>();
+      for (const satellite of visibleSatellites.slice(index, index + chunkSize)) {
         try {
-          return [
+          additions.set(
             satellite.id,
             buildGroundTrack(satellite, trackStart, TRACK_WINDOW_MINUTES + 1, trackStepSeconds)
-          ] as const;
+          );
         } catch {
-          return [satellite.id, [] as GroundTrackPoint[]] as const;
+          additions.set(satellite.id, []);
         }
-      })
-    );
-  }, [trackStart, trackStepSeconds, visibleSatellites]);
+      }
+
+      setGroundTracksById((previous) => new Map([...previous, ...additions]));
+      index += chunkSize;
+      if (index < visibleSatellites.length) {
+        requestAnimationFrame(buildChunk);
+      }
+    };
+    buildChunk();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [trackStart, trackStepSeconds, visibleSatellites, tracksPaused]);
 
   useEffect(() => {
     const previous = previousPlaybackTickRef.current;
@@ -230,10 +269,19 @@ export function TrackerPage() {
     }
 
     const elapsedMinutes = ((next - previous) / 60000) * playbackSpeed;
+    if (selectedPass) {
+      const losOffsetMin =
+        (new Date(selectedPass.los).getTime() - timelineAnchorRef.current) / 60000;
+      if (timelineOffsetMin + elapsedMinutes >= losOffsetMin) {
+        setTimelineOffsetMin(clampTimelineOffset(losOffsetMin, timelineRange.min, timelineRange.max));
+        setTimelinePlaying(false);
+        return;
+      }
+    }
     setTimelineOffsetMin((current) =>
       clampTimelineOffset(current + elapsedMinutes, timelineRange.min, timelineRange.max)
     );
-  }, [playbackNow, playbackSpeed, timelineLive, timelinePlaying, timelineRange]);
+  }, [playbackNow, playbackSpeed, selectedPass, timelineLive, timelineOffsetMin, timelinePlaying, timelineRange]);
 
   useEffect(() => {
     if (!trackerPreviewRequest) {
@@ -307,26 +355,64 @@ export function TrackerPage() {
       return null;
     }
   }, [currentTime, focusSatellite, observer]);
-  const passWindowKey = Math.floor(currentTime.getTime() / 60000);
-  const upcomingPasses = useMemo(() => {
+  // Coarsen the re-anchoring window during fast playback so prediction does not
+  // refire every simulated minute.
+  const passWindowMs =
+    timelinePlaying && playbackSpeed >= FAST_PLAYBACK_THRESHOLD ? 5 * 60000 : 60000;
+  const passWindowKey = Math.floor(currentTime.getTime() / passWindowMs);
+  const [upcomingPasses, setUpcomingPasses] = useState<PassPrediction[]>([]);
+  // Prediction takes a moment; without this the panel claims "no passes" before it has looked.
+  const [upcomingPassesLoading, setUpcomingPassesLoading] = useState(false);
+  const passRequestIdRef = useRef(0);
+  useEffect(() => {
     if (!focusSatellite) {
-      return [];
+      setUpcomingPasses([]);
+      setUpcomingPassesLoading(false);
+      return;
     }
 
-    const passStart = new Date(passWindowKey * 60000);
-    try {
-      return predictPassesForSatellite(focusSatellite, observer, {
+    const requestId = ++passRequestIdRef.current;
+    setUpcomingPassesLoading(true);
+    const passStart = new Date(passWindowKey * passWindowMs);
+    predictPassesBulkStreaming(
+      [focusSatellite],
+      observer,
+      {
         start: passStart,
         end: new Date(passStart.getTime() + 3 * 86400000),
         minElevationDeg: observer.minElevationDeg,
         stepSeconds: 45
-      }).slice(0, 4);
-    } catch {
-      return [];
+      },
+      () => {}
+    )
+      .then((passes) => {
+        if (passRequestIdRef.current === requestId) {
+          setUpcomingPasses(passes.slice(0, 4));
+          setUpcomingPassesLoading(false);
+        }
+      })
+      .catch(() => {
+        if (passRequestIdRef.current === requestId) {
+          setUpcomingPasses([]);
+          setUpcomingPassesLoading(false);
+        }
+      });
+  }, [focusSatellite, observer, passWindowKey, passWindowMs]);
+
+  async function handleRefreshTle() {
+    setRefreshStatus(null);
+    try {
+      await refreshSelectedSatellite();
+      setRefreshIsError(false);
+      setRefreshStatus("TLE refreshed.");
+    } catch (caught) {
+      setRefreshIsError(true);
+      setRefreshStatus(caught instanceof Error ? caught.message : "Refresh failed.");
     }
-  }, [focusSatellite, observer, passWindowKey]);
+  }
 
   function goLive() {
+    clearTrackerPreviewRequest();
     timelineAnchorRef.current = Date.now();
     timelineDragRef.current = null;
     setTimelineOffsetMin(0);
@@ -347,13 +433,19 @@ export function TrackerPage() {
       return;
     }
 
-    setTimelinePlaying((current) => !current);
+    const next = !timelinePlaying;
+    if (next) {
+      // Reset the tick baseline so the first playback tick does not jump by the paused gap.
+      previousPlaybackTickRef.current = Date.now();
+    }
+    setTimelinePlaying(next);
   }
 
   function changePlaybackSpeed(value: number) {
     setPlaybackSpeed(value);
     if (timelineLive) {
       timelineAnchorRef.current = Date.now();
+      previousPlaybackTickRef.current = Date.now();
       setTimelineOffsetMin(0);
       setTimelineLive(false);
       setTimelinePlaying(true);
@@ -361,6 +453,7 @@ export function TrackerPage() {
   }
 
   function setTimelineOffset(value: number) {
+    clearTrackerPreviewRequest();
     const nextValue = roundTimelineOffset(value);
     setTimelineLive(false);
     setTimelinePlaying(false);
@@ -445,14 +538,34 @@ export function TrackerPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">Live tracker</h1>
         <p className="mt-2 text-[var(--muted)]">
           {propagationFailed
-            ? `Could not propagate ${focusSatellite?.name ?? "the selected satellite"}. Its orbital elements may be stale or the object may have decayed - try refreshing the TLE from Details, or select another satellite.`
+            ? `Could not propagate ${focusSatellite?.name ?? "the selected satellite"}. Its orbital elements may be stale or the object may have decayed - try "Update orbit data" on the Details page, or select another satellite.`
             : "Add a satellite in Catalog to start live tracking."}
         </p>
-        {!propagationFailed ? (
-          <Button className="mt-4" onClick={() => setPage("catalog")}>
-            Open Catalog
-          </Button>
-        ) : null}
+        <div className="mt-4 flex flex-wrap gap-2">
+          {propagationFailed && focusSatellite ? (
+            <>
+              <Button
+                onClick={() => {
+                  selectSatellite(focusSatellite.id);
+                  setPage("details");
+                }}
+              >
+                Open in Details
+              </Button>
+              {focusSatellite.id === selectedSatelliteId ? (
+                <Button
+                  variant="secondary"
+                  title="Fetch fresh two-line elements (TLE) for this satellite"
+                  onClick={() => void refreshSelectedSatellite()}
+                >
+                  Update orbit data
+                </Button>
+              ) : null}
+            </>
+          ) : (
+            <Button onClick={() => setPage("catalog")}>Go to Catalog</Button>
+          )}
+        </div>
       </div>
     );
   }
@@ -482,17 +595,28 @@ export function TrackerPage() {
       <div className="tracker-header flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="label">Live tracker</p>
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">Orbital view</h1>
+          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-[var(--text)]">Orbital view</h1>
           <p className="mono mt-1.5 text-sm text-[var(--muted)]">
             Showing {trackedSatellites.length} satellite
             {trackedSatellites.length === 1 ? "" : "s"}
           </p>
         </div>
         <div className="tracker-view-toggle flex gap-2">
-          <Button variant={trackerViewMode === "2d" ? "default" : "secondary"} onClick={() => setTrackerViewMode("2d")}>
+          <Button
+            variant={trackerViewMode === "2d" ? "default" : "secondary"}
+            aria-pressed={trackerViewMode === "2d"}
+            onClick={() => setTrackerViewMode("2d")}
+          >
             2D Map
           </Button>
-          <Button variant={trackerViewMode === "3d" ? "default" : "secondary"} onClick={() => setTrackerViewMode("3d")}>
+          <Button
+            variant={trackerViewMode === "3d" ? "default" : "secondary"}
+            aria-pressed={trackerViewMode === "3d"}
+            onClick={() => {
+              setGlobeMounted(true);
+              setTrackerViewMode("3d");
+            }}
+          >
             3D Globe
           </Button>
         </div>
@@ -505,20 +629,9 @@ export function TrackerPage() {
           <div
             key={satellite.id}
             className={clsx(
-              "tracker-satellite-pill flex cursor-pointer items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]",
+              "tracker-satellite-pill flex items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]",
               selected && "selected"
             )}
-            role="button"
-            tabIndex={0}
-            aria-pressed={selected}
-            title="Inspect this satellite"
-            onClick={() => inspectSatellite(satellite.id)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                inspectSatellite(satellite.id);
-              }
-            }}
           >
             <input
               className="satellite-color-picker"
@@ -529,7 +642,17 @@ export function TrackerPage() {
               onClick={(event) => event.stopPropagation()}
               onChange={(event) => void setSatelliteColor(satellite.id, event.target.value)}
             />
-            <span className="font-medium">{satellite.name}</span>
+            {/* The pill also holds a colour picker and Untrack, so the name button
+                is the selectable control rather than the pill itself. */}
+            <button
+              type="button"
+              className="link-button cursor-pointer"
+              aria-pressed={selected}
+              title="Inspect this satellite"
+              onClick={() => inspectSatellite(satellite.id)}
+            >
+              {satellite.name}
+            </button>
             <span className="mono text-xs text-[var(--faint)]">{satellite.noradId}</span>
             {watchlistIds.includes(satellite.id) ? (
               <Button
@@ -560,7 +683,44 @@ export function TrackerPage() {
         ) : null}
       </div>
 
-      <Card className="tracker-timeline border-[var(--line-strong)] bg-[var(--surface)] py-0 shadow-none">
+      {trackerPreviewRequest ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[rgba(108,140,255,0.35)] bg-[var(--accent-soft)] px-4 py-2.5">
+          <p className="text-sm text-[var(--text)]">
+            <span className="font-semibold">Pass preview</span>
+            <span className="text-[var(--muted)]">
+              {" · "}
+              {selectedPass?.satelliteName ?? selectedSatellite?.name}
+              {" · AOS "}
+              {formatTimestamp(trackerPreviewRequest.startTime)}
+              {selectedPass ? ` · LOS ${formatTimestamp(selectedPass.los)}` : ""}
+            </span>
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                clearTrackerPreviewRequest();
+                setPage("passes");
+              }}
+            >
+              Back to passes
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                clearTrackerPreviewRequest();
+                goLive();
+              }}
+            >
+              Go live
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      <Card className="tracker-timeline rounded-[var(--radius-lg)] border-[var(--line)] bg-[var(--surface)] py-0 shadow-none">
         <CardContent className="p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
@@ -577,7 +737,7 @@ export function TrackerPage() {
                   </span>
                 ) : null}
               </div>
-              <div className="mono mt-1 text-xs text-[var(--muted)]">{currentTime.toLocaleString()}</div>
+              <div className="mono mt-1 text-xs text-[var(--muted)]">{formatTimestamp(currentTime)}</div>
             </div>
 
             <div className="tracker-timeline-actions flex flex-wrap items-center justify-end gap-2">
@@ -585,6 +745,7 @@ export function TrackerPage() {
                 variant={showSunMoon ? "default" : "secondary"}
                 size="sm"
                 className="h-8"
+                aria-pressed={showSunMoon}
                 onClick={() => setShowSunMoon((current) => !current)}
               >
                 <SunMoon size={14} />
@@ -610,6 +771,7 @@ export function TrackerPage() {
                 variant={timelineLive ? "default" : "secondary"}
                 size="sm"
                 className="h-8"
+                aria-pressed={timelineLive}
                 onClick={goLive}
               >
                 <RotateCcw size={14} />
@@ -667,18 +829,22 @@ export function TrackerPage() {
           showSunMoon={showSunMoon}
           onSatelliteDoubleClick={inspectSatellite}
         />
-      ) : (
-        <Globe3D
-          observer={observer}
-          satellites={trackedSatellites}
-          currentTime={currentTime}
-          showSunMoon={showSunMoon}
-          onSatelliteDoubleClick={inspectSatellite}
-        />
-      )}
+      ) : null}
+      {globeMounted ? (
+        <div className={trackerViewMode === "3d" ? undefined : "hidden"}>
+          <Globe3D
+            observer={observer}
+            satellites={trackedSatellites}
+            currentTime={currentTime}
+            showSunMoon={showSunMoon}
+            onSatelliteDoubleClick={inspectSatellite}
+            onFallbackTo2D={() => setTrackerViewMode("2d")}
+          />
+        </div>
+      ) : null}
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <section ref={dataPanelRef} className="panel min-w-0 scroll-mt-16 p-4 sm:p-5 md:scroll-mt-4">
+        <section ref={dataPanelRef} className="panel min-w-0 scroll-mt-16 p-4 sm:p-5 md:scroll-mt-14">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="label">Selected satellite</p>
@@ -688,9 +854,22 @@ export function TrackerPage() {
                 {focusSatellite.internationalDesignator ? ` · ${focusSatellite.internationalDesignator}` : ""}
               </p>
             </div>
-            <Button variant="secondary" size="sm" onClick={() => void refreshSelectedSatellite()}>
-              Refresh TLE
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={refreshingSelected}
+                title="Fetch fresh two-line elements (TLE) for this satellite"
+                onClick={() => void handleRefreshTle()}
+              >
+                {refreshingSelected ? "Refreshing…" : "Update orbit data"}
+              </Button>
+              {refreshStatus ? (
+                <p className={`mono text-xs ${refreshIsError ? "text-[var(--danger)]" : "text-[var(--accent)]"}`}>
+                  {refreshStatus}
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <div className="mt-5">
@@ -698,11 +877,37 @@ export function TrackerPage() {
               <h3 className="text-sm font-semibold text-[var(--text)]">Upcoming passes</h3>
               <span className="mono text-xs text-[var(--muted)]">Next 3 days</span>
             </div>
-            <div className="mt-3 overflow-auto">
+            <div className="mt-3 grid gap-2 sm:hidden">
+              {upcomingPasses.map((pass) => (
+                <div key={`${pass.satelliteId}-${pass.aos}`} className="panel-strong p-3">
+                  <div className="mono text-sm text-[var(--text)]">{formatTimestampCompact(pass.aos)}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--muted)]">
+                    <span>Max {pass.maxElevationDeg.toFixed(1)}°</span>
+                    <span>{formatDuration(pass.durationSec)}</span>
+                    <span className="mono">
+                      {pass.aosAzimuthDeg.toFixed(0)}° → {pass.losAzimuthDeg.toFixed(0)}°
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {upcomingPasses.length === 0 ? (
+                upcomingPassesLoading ? (
+                  <p className="mono py-4 text-center text-sm text-[var(--muted)]" role="status">
+                    Finding upcoming passes…
+                  </p>
+                ) : (
+                  <p className="py-4 text-center text-sm text-[var(--muted)]">
+                    No passes above {observer.minElevationDeg.toFixed(0)}° in the next 3 days.
+                    Lower the minimum elevation in Settings to widen the search.
+                  </p>
+                )
+              ) : null}
+            </div>
+            <div className="mt-3 hidden overflow-auto sm:block">
               <table>
                 <thead>
                   <tr>
-                    <th>AOS</th>
+                    <th title="Acquisition of signal — pass start">Start (AOS)</th>
                     <th>Max El</th>
                     <th>Duration</th>
                     <th>Azimuth</th>
@@ -711,18 +916,25 @@ export function TrackerPage() {
                 <tbody>
                   {upcomingPasses.map((pass) => (
                     <tr key={`${pass.satelliteId}-${pass.aos}`}>
-                      <td className="mono">{formatTimestamp(pass.aos)}</td>
-                      <td>{pass.maxElevationDeg.toFixed(1)}°</td>
-                      <td>{formatDuration(pass.durationSec)}</td>
-                      <td className="mono">
-                        {pass.aosAzimuthDeg.toFixed(0)}°{" -> "}{pass.losAzimuthDeg.toFixed(0)}°
+                      <td className="mono whitespace-nowrap">{formatTimestampCompact(pass.aos)}</td>
+                      <td className="whitespace-nowrap">{pass.maxElevationDeg.toFixed(1)}°</td>
+                      <td className="whitespace-nowrap">{formatDuration(pass.durationSec)}</td>
+                      <td className="mono whitespace-nowrap">
+                        {pass.aosAzimuthDeg.toFixed(0)}°{" → "}{pass.losAzimuthDeg.toFixed(0)}°
                       </td>
                     </tr>
                   ))}
                   {upcomingPasses.length === 0 ? (
                     <tr>
                       <td colSpan={4} className="py-5 text-center text-sm text-[var(--muted)]">
-                        No passes above the current horizon mask.
+                        {upcomingPassesLoading ? (
+                          <span className="mono" role="status">Finding upcoming passes…</span>
+                        ) : (
+                          <>
+                            No passes above {observer.minElevationDeg.toFixed(0)}° in the next 3 days.
+                            Lower the minimum elevation in Settings to widen the search.
+                          </>
+                        )}
                       </td>
                     </tr>
                   ) : null}

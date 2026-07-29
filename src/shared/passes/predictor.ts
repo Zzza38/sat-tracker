@@ -26,6 +26,29 @@ const pendingRequests = new Map<
   }
 >();
 
+// Thrown (and rejected) when a prediction is cancelled via cancelPassPrediction.
+// Callers that supersede their own requests should treat this as a no-op.
+export class PassPredictionCancelledError extends Error {
+  constructor() {
+    super("Pass prediction cancelled.");
+    this.name = "PassPredictionCancelledError";
+  }
+}
+
+// Abort an in-flight prediction: reject its pending promise so the awaiting
+// caller unwinds, and tell the worker to drop the job (a queued job no-ops at
+// the head of the queue via the latest-id guard; a running WASM job can't be
+// interrupted but its result is discarded). Safe to call with an unknown id.
+export function cancelPassPrediction(id: number) {
+  const pending = pendingRequests.get(id);
+  if (!pending) {
+    return;
+  }
+  pendingRequests.delete(id);
+  pending.reject(new PassPredictionCancelledError());
+  worker?.postMessage({ type: "cancel", id });
+}
+
 function getWorker() {
   if (workerDisabled || typeof Worker === "undefined") {
     return null;
