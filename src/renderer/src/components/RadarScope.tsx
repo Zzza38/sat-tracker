@@ -53,7 +53,7 @@ export function RadarScope({
 
       <svg
         viewBox={`0 0 ${SIZE} ${SIZE}`}
-        className="mt-4 h-[280px] w-full sm:h-[320px]"
+        className="mx-auto mt-4 block h-auto w-full max-w-[420px]"
         role="img"
         aria-label="Radar scope showing satellite azimuth and elevation"
       >
@@ -96,12 +96,13 @@ export function RadarScope({
             {label}
           </text>
         ))}
-        <text x={CENTER} y={CENTER - 5} textAnchor="middle" fill="#8a8e97" fontSize="10">
+        <text x={CENTER} y={CENTER - 5} textAnchor="middle" fill="var(--faint)" fontSize="10">
           Zenith
         </text>
 
         {satellites.map((satellite) => {
           const point = plotPoint(satellite.azimuthDeg, satellite.elevationDeg);
+          const labelLeft = point.x > CENTER;
           const selected = satellite.id === selectedSatelliteId;
           const belowMask = satellite.elevationDeg < minElevationDeg;
 
@@ -117,10 +118,6 @@ export function RadarScope({
                 event.preventDefault();
                 onSatelliteDoubleClick?.(satellite.id);
               }}
-              onDoubleClick={(event) => {
-                event.preventDefault();
-                onSatelliteDoubleClick?.(satellite.id);
-              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
@@ -128,7 +125,7 @@ export function RadarScope({
                 }
               }}
             >
-              <title>{`${satellite.name}: az ${satellite.azimuthDeg.toFixed(1)} deg, el ${satellite.elevationDeg.toFixed(1)} deg`}</title>
+              <title>{`${satellite.name}: azimuth ${satellite.azimuthDeg.toFixed(1)}°, elevation ${satellite.elevationDeg.toFixed(1)}° · click to inspect`}</title>
               <circle
                 cx={point.x}
                 cy={point.y}
@@ -141,8 +138,9 @@ export function RadarScope({
                 <circle cx={point.x} cy={point.y} r="14" fill="none" stroke={satellite.color} strokeOpacity="0.72" strokeWidth="2" />
               ) : null}
               <text
-                x={point.x + 11}
+                x={point.x + (labelLeft ? -11 : 11)}
                 y={point.y - 8}
+                textAnchor={labelLeft ? "end" : "start"}
                 fill="#eef2f0"
                 fontSize="11"
                 fontWeight="700"
@@ -171,10 +169,15 @@ export function RadarScope({
               <span className="truncate">{satellite.name}</span>
             </span>
             <span className="mono shrink-0 text-xs text-[var(--muted)]">
-              {satellite.azimuthDeg.toFixed(0)} deg / {satellite.elevationDeg.toFixed(0)} deg
+              {satellite.azimuthDeg.toFixed(0)}° / {satellite.elevationDeg.toFixed(0)}°
             </span>
           </button>
         ))}
+        {satellites.length > 4 ? (
+          <p className="mono px-2 py-1 text-xs text-[var(--muted)]">
+            +{satellites.length - 4} more on scope — hover a target or click to inspect
+          </p>
+        ) : null}
       </div>
     </section>
   );

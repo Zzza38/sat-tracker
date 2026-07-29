@@ -30,21 +30,30 @@ function normalizeNoradId(raw: string) {
   return value;
 }
 
+export function parseNoradIdsDetailed(raw: string): { ids: string[]; ignored: string[] } {
+  const ids: string[] = [];
+  const ignored: string[] = [];
+  const seen = new Set<string>();
+  for (const token of raw.split(/[\s,;]+/)) {
+    const part = token.trim();
+    if (!part) {
+      continue;
+    }
+    const value = Number(part);
+    if (/^\d{1,9}$/.test(part) && Number.isSafeInteger(value) && value > 0 && value <= 999_999_999) {
+      if (!seen.has(part)) {
+        seen.add(part);
+        ids.push(part);
+      }
+    } else {
+      ignored.push(part);
+    }
+  }
+  return { ids, ignored };
+}
+
 export function parseNoradIds(raw: string): string[] {
-  return [
-    ...new Set(
-      raw
-        .split(/[\s,;]+/)
-        .map((part) => part.trim())
-        .filter((part) => {
-          if (!/^\d{1,9}$/.test(part)) {
-            return false;
-          }
-          const value = Number(part);
-          return Number.isSafeInteger(value) && value > 0 && value <= 999_999_999;
-        })
-    )
-  ];
+  return parseNoradIdsDetailed(raw).ids;
 }
 
 export async function addFromNoradId(noradId: string) {
@@ -53,9 +62,11 @@ export async function addFromNoradId(noradId: string) {
 }
 
 export async function addFromNoradIds(raw: string) {
-  const ids = parseNoradIds(raw);
+  const { ids, ignored } = parseNoradIdsDetailed(raw);
   if (ids.length === 0) {
-    throw new Error("Paste one or more NORAD IDs (one per line, or comma-separated).");
+    throw new Error(
+      `No valid NORAD IDs found${ignored.length ? ` (ignored: ${ignored.join(", ")})` : ""}. Paste one or more IDs (one per line, or comma-separated).`
+    );
   }
 
   const outcomes = new Map<
@@ -91,7 +102,7 @@ export async function addFromNoradIds(raw: string) {
     );
   }
 
-  return { added, failures };
+  return { added, failures, ignored };
 }
 
 export async function refreshSatellite(id: string) {
@@ -149,18 +160,23 @@ export async function removeSatellite(id: string) {
 }
 
 export async function toggleWatchlistSatellite(watchlistId: string, satelliteId: string) {
-  const watchlist = await db.watchlists.get(watchlistId);
-  if (!watchlist) {
-    throw new Error("Watchlist not found.");
-  }
+  // Read-modify-write must be atomic: toggling several satellites in quick
+  // succession fires overlapping calls, and unsynchronized writes would each
+  // start from the same stale list so only the last one survived.
+  return db.transaction("rw", db.watchlists, async () => {
+    const watchlist = await db.watchlists.get(watchlistId);
+    if (!watchlist) {
+      throw new Error("Watchlist not found.");
+    }
 
-  const exists = watchlist.satelliteIds.includes(satelliteId);
-  const satelliteIds = exists
-    ? watchlist.satelliteIds.filter((id) => id !== satelliteId)
-    : [satelliteId, ...watchlist.satelliteIds];
+    const exists = watchlist.satelliteIds.includes(satelliteId);
+    const satelliteIds = exists
+      ? watchlist.satelliteIds.filter((id) => id !== satelliteId)
+      : [satelliteId, ...watchlist.satelliteIds];
 
-  await db.watchlists.update(watchlistId, { satelliteIds });
-  return satelliteIds;
+    await db.watchlists.update(watchlistId, { satelliteIds });
+    return satelliteIds;
+  });
 }
 
 export async function getWatchlistSatellites(watchlistId = "default") {

@@ -72,6 +72,7 @@ const RAD = Math.PI / 180;
 const DEG = 180 / Math.PI;
 const DOUBLE_TAP_MS = 280;
 const DOUBLE_TAP_MAX_DISTANCE_PX = 28;
+const SUN_MOON_STEP_MS = 30000;
 const DEFAULT_VIEWPORT: MapViewport = { panX: 0, panY: 0, zoom: 1 };
 
 function clamp(value: number, min: number, max: number) {
@@ -116,6 +117,19 @@ function projectUnwrappedPoint(point: UnwrappablePoint): ProjectedPoint {
 
 function trackPath(points: GroundTrackPoint[]) {
   return projectedPath(unwrapLongitudes(points).map(projectUnwrappedPoint));
+}
+
+const trackPathCache = new WeakMap<GroundTrackPoint[], string>();
+
+function cachedTrackPath(points: GroundTrackPoint[]) {
+  const cached = trackPathCache.get(points);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const path = trackPath(points);
+  trackPathCache.set(points, path);
+  return path;
 }
 
 function normalizeLongitude(longitudeDeg: number) {
@@ -222,21 +236,26 @@ export function Map2D({
     [viewport.panX, viewport.zoom]
   );
   const observerPoint = projectLonLat([observer.longitude, observer.latitude]);
-  const sunSubpoint = useMemo(() => getSunSubpoint(currentTime), [currentTime]);
-  const sunPoint = useMemo(() => {
-    return projectLonLat([sunSubpoint.longitudeDeg, sunSubpoint.latitudeDeg]);
-  }, [sunSubpoint]);
+  const sunMoonTimeKey = Math.floor(currentTime.getTime() / SUN_MOON_STEP_MS);
+  const sunSubpoint = useMemo(
+    () => getSunSubpoint(new Date(sunMoonTimeKey * SUN_MOON_STEP_MS)),
+    [sunMoonTimeKey]
+  );
+  const sunPoint = useMemo(
+    () => projectLonLat([sunSubpoint.longitudeDeg, sunSubpoint.latitudeDeg]),
+    [sunSubpoint]
+  );
   const moonPoint = useMemo(() => {
-    const moon = getMoonSubpoint(currentTime);
+    const moon = getMoonSubpoint(new Date(sunMoonTimeKey * SUN_MOON_STEP_MS));
     return projectLonLat([moon.longitudeDeg, moon.latitudeDeg]);
-  }, [currentTime]);
+  }, [sunMoonTimeKey]);
   const nightOverlay = useMemo(() => getNightOverlay(sunSubpoint, 3), [sunSubpoint]);
   const satelliteViews = useMemo(
     () =>
       satellites.map((satellite) => ({
         ...satellite,
         point: projectLonLat([satellite.longitudeDeg, satellite.latitudeDeg]),
-        groundTrackPath: trackPath(satellite.groundTrack),
+        groundTrackPath: cachedTrackPath(satellite.groundTrack),
         footprint: footprintSize(satellite)
       })),
     [satellites]
@@ -510,7 +529,7 @@ export function Map2D({
         viewBox={`0 0 ${WORLD_WIDTH} ${WORLD_HEIGHT}`}
         preserveAspectRatio="xMidYMid slice"
         className="h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
-        role="img"
+        role="group"
         aria-label="World map with satellite ground track. Drag to pan, pinch or double-tap to zoom."
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -537,9 +556,10 @@ export function Map2D({
         <g transform={`translate(${viewport.panX} ${viewport.panY}) scale(${viewport.zoom})`}>
           {worldCopies.map((copy) => {
             const offsetX = copy * WORLD_WIDTH;
+            const interactive = copy === 0;
             return (
               <g key={`world-copy-${copy}`} transform={`translate(${offsetX} 0)`}>
-                <g opacity="0.32" stroke="#334050" strokeWidth="1">
+                <g opacity="0.32" stroke="#334050" strokeWidth={markerScale}>
                   {Array.from({ length: 11 }, (_, index) => -150 + index * 30).map((longitude) => {
                     const { x } = projectLonLat([longitude, 0]);
                     return <line key={`lon-${copy}-${longitude}`} x1={x} x2={x} y1="0" y2={WORLD_HEIGHT} />;
@@ -626,9 +646,21 @@ export function Map2D({
                     key={`${copy}-${satellite.id}`}
                     className="cursor-pointer"
                     data-satellite-marker
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Inspect ${satellite.name}`}
+                    role={interactive ? "button" : undefined}
+                    aria-label={interactive ? `Inspect ${satellite.name}` : undefined}
+                    aria-hidden={interactive ? undefined : "true"}
+                    tabIndex={interactive ? 0 : undefined}
+                    onKeyDown={
+                      interactive
+                        ? (event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              onSatelliteDoubleClick?.(satellite.id);
+                            }
+                          }
+                        : undefined
+                    }
                     transform={`translate(${satellite.point.x} ${satellite.point.y}) scale(${markerScale})`}
                     onClick={(event) => {
                       event.preventDefault();
@@ -640,15 +672,9 @@ export function Map2D({
                       event.stopPropagation();
                       onSatelliteDoubleClick?.(satellite.id);
                     }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        onSatelliteDoubleClick?.(satellite.id);
-                      }
-                    }}
                   >
-                    <title>{`Tap to inspect ${satellite.name}`}</title>
+                    <circle r={44} fill="transparent" />
+                    <title>{`${satellite.name} · ${satellite.latitudeDeg.toFixed(2)}°, ${satellite.longitudeDeg.toFixed(2)}° · alt ${satellite.altitudeKm.toFixed(0)} km\naz ${satellite.azimuthDeg.toFixed(1)} deg, el ${satellite.elevationDeg.toFixed(1)} deg · range ${satellite.rangeKm.toFixed(0)} km`}</title>
                     <circle r={satellite.selected ? "10" : "7"} fill={satellite.color} filter="url(#markerGlow)" />
                     <circle r={satellite.selected ? "16" : "12"} fill="none" stroke={satellite.color} strokeOpacity="0.68" strokeWidth="2.5" />
                     {showSatelliteLabels || satellite.selected ? (
@@ -670,7 +696,7 @@ export function Map2D({
       </svg>
 
       <div className="tracker-map-chrome pointer-events-none absolute inset-0 z-10 p-2.5 sm:p-3">
-        <div className="tracker-map-zoom-badge absolute left-2.5 top-2.5 rounded-md border border-[var(--line)] bg-black/45 px-2 py-1 font-mono text-[0.68rem] text-[var(--muted)] backdrop-blur sm:left-3 sm:top-3">
+        <div className="tracker-map-zoom-badge absolute left-2.5 top-2.5 rounded-md border border-[var(--line)] bg-black/45 px-2 py-1 mono text-[0.68rem] text-[var(--muted)] backdrop-blur sm:left-3 sm:top-3">
           {viewport.zoom.toFixed(1)}x
         </div>
 
@@ -692,6 +718,7 @@ export function Map2D({
             variant="secondary"
             size="icon-sm"
             aria-label="Zoom in"
+            title="Zoom in"
             onClick={() => zoomBy(1.18)}
           >
             <Plus />
@@ -701,6 +728,7 @@ export function Map2D({
             variant="secondary"
             size="icon-sm"
             aria-label="Zoom out"
+            title="Zoom out"
             onClick={() => zoomBy(1 / 1.18)}
           >
             <Minus />
@@ -710,6 +738,7 @@ export function Map2D({
             variant="secondary"
             size="icon-sm"
             aria-label="Reset map view"
+            title="Reset map view"
             onClick={resetViewport}
           >
             <RotateCcw />
@@ -719,6 +748,7 @@ export function Map2D({
             variant="secondary"
             size="icon-sm"
             aria-label={expanded ? "Exit full map" : "Open full map"}
+            title={expanded ? "Exit full map" : "Open full map"}
             aria-pressed={expanded}
             onClick={() => setExpanded((current) => !current)}
           >

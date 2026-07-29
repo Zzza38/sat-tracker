@@ -5,7 +5,7 @@ const GP_ENDPOINT = "https://celestrak.org/NORAD/elements/gp.php";
 const SUP_GP_ENDPOINT = "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php";
 const FETCH_TIMEOUT_MS = 15000;
 
-function validateRemoteUrl(rawUrl: string) {
+export function validateRemoteUrl(rawUrl: string) {
   const url = new URL(rawUrl);
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error("Custom TLE sources must use HTTP or HTTPS.");

@@ -11,7 +11,7 @@ const SettingsPage = lazy(() => import("./pages/SettingsPage").then((module) => 
 const TrackerPage = lazy(() => import("./pages/TrackerPage").then((module) => ({ default: module.TrackerPage })));
 
 export default function App() {
-  const { page, error, clearError, bootstrapping } = useApp();
+  const { page, error, clearError, bootstrapping, refreshCatalog } = useApp();
 
   const content = {
     catalog: <CatalogPage />,
@@ -26,17 +26,24 @@ export default function App() {
     <Layout>
       {error ? (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-[10px] border border-[var(--line-strong)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--danger)]">
-          <p>{error}</p>
-          <button type="button" className="ghost shrink-0" onClick={clearError} aria-label="Dismiss error">
-            Dismiss
-          </button>
+          <p role="alert">{error}</p>
+          <div className="flex shrink-0 items-center gap-1">
+            <button type="button" className="ghost" onClick={() => { void refreshCatalog(); }}>
+              Retry
+            </button>
+            <button type="button" className="ghost" onClick={clearError} aria-label="Dismiss error">
+              Dismiss
+            </button>
+          </div>
         </div>
       ) : null}
       {bootstrapping ? (
         <div className="panel p-8" role="status">
           <p className="label">Catalog</p>
-          <h1 className="mt-2 text-2xl font-semibold text-[var(--text)]">Loading orbital data</h1>
-          <p className="mt-2 text-sm text-[var(--muted)]">Fetching configured TLE sources and preparing the catalog.</p>
+          <h1 className="mt-2 text-2xl font-semibold text-[var(--text)]">Loading satellite data</h1>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Downloading the latest orbit data for your feeds and preparing the catalog.
+          </p>
         </div>
       ) : (
         <Suspense fallback={<div className="panel p-8 text-sm text-[var(--muted)]" role="status">Loading page...</div>}>

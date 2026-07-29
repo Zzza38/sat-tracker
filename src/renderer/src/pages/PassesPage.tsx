@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { clsx } from "clsx";
-import { Bell, BellRing } from "lucide-react";
+import { ArrowDown, ArrowUp, Bell, BellRing } from "lucide-react";
 import { predictPassesBulkStreaming, passesToCsv, passesToIcs } from "@/shared/passes/predictor";
-import { formatDuration, formatTimestamp } from "@/shared/utils/date";
+import type { PassPrediction } from "@/shared/types";
+import { formatDateTimeParts, formatDuration, formatTimestamp, formatTimestampCompact, timeZoneAbbreviation } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
 import { ElevationChart } from "../components/ElevationChart";
 import { ElevationColorLegend } from "../components/ElevationColorLegend";
@@ -23,10 +24,84 @@ const PASS_COLOR_BY_ELEVATION_KEY = "sat-tracker-passes-color-by-elevation";
 
 function readColorByElevationPreference() {
   try {
-    const stored = sessionStorage.getItem(PASS_COLOR_BY_ELEVATION_KEY);
+    const stored = localStorage.getItem(PASS_COLOR_BY_ELEVATION_KEY);
     return stored === null ? true : stored === "true";
   } catch {
     return true;
+  }
+}
+
+type PassSortKey = "satellite" | "aos" | "tca" | "los" | "maxElevation" | "duration";
+type SortDirection = "asc" | "desc";
+
+// Chronological reads naturally; the quality columns are most useful biggest-first,
+// so each column opts into the direction an observer actually wants on first click.
+const PASS_SORT_DEFAULT_DIRECTION: Record<PassSortKey, SortDirection> = {
+  satellite: "asc",
+  aos: "asc",
+  tca: "asc",
+  los: "asc",
+  maxElevation: "desc",
+  duration: "desc"
+};
+
+function comparePasses(left: PassPrediction, right: PassPrediction, key: PassSortKey) {
+  switch (key) {
+    case "satellite":
+      return left.satelliteName.localeCompare(right.satelliteName) || left.aos.localeCompare(right.aos);
+    case "tca":
+      return left.tca.localeCompare(right.tca);
+    case "los":
+      return left.los.localeCompare(right.los);
+    case "maxElevation":
+      return left.maxElevationDeg - right.maxElevationDeg || left.aos.localeCompare(right.aos);
+    case "duration":
+      return left.durationSec - right.durationSec || left.aos.localeCompare(right.aos);
+    default:
+      return left.aos.localeCompare(right.aos);
+  }
+}
+
+interface PassSortHeaderProps {
+  columnKey: PassSortKey;
+  activeKey: PassSortKey;
+  direction: SortDirection;
+  onSort: (key: PassSortKey) => void;
+  title?: string;
+  className?: string;
+  children: ReactNode;
+}
+
+function PassSortHeader({ columnKey, activeKey, direction, onSort, title, className, children }: PassSortHeaderProps) {
+  const active = columnKey === activeKey;
+  return (
+    <th
+      className={className}
+      aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}
+      title={title}
+    >
+      <button type="button" className="pass-sort-header" onClick={() => onSort(columnKey)}>
+        {children}
+        {active ? (
+          direction === "asc" ? (
+            <ArrowUp size={11} aria-hidden="true" />
+          ) : (
+            <ArrowDown size={11} aria-hidden="true" />
+          )
+        ) : null}
+      </button>
+    </th>
+  );
+}
+
+const PASS_DAYS_KEY = "sat-tracker-passes-days";
+
+function readDaysPreference() {
+  try {
+    const n = Number(localStorage.getItem(PASS_DAYS_KEY) ?? "");
+    return Number.isInteger(n) && n >= 1 && n <= 14 ? n : 7;
+  } catch {
+    return 7;
   }
 }
 
@@ -41,18 +116,22 @@ export function PassesPage() {
     satellites,
     watchlistIds,
     selectedSatellite,
-    previewPassOnTracker
+    previewPassOnTracker,
+    setPage
   } = useApp();
   const geometryRef = useRef<HTMLElement | null>(null);
   const selectedPassRef = useRef(selectedPass);
   const computeRequestRef = useRef(0);
   const [loading, setLoading] = useState(false);
-  const [days, setDays] = useState(7);
-  const [daysDraft, setDaysDraft] = useState(7);
+  const [days, setDays] = useState(readDaysPreference);
+  const [sliderDays, setSliderDays] = useState(days);
   const [error, setError] = useState<string | null>(null);
+  const [emptyNotice, setEmptyNotice] = useState(false);
   const [computeProgress, setComputeProgress] = useState<{ completed: number; total: number } | null>(null);
   const [colorByElevation, setColorByElevation] = useState(readColorByElevationPreference);
   const [, setReminderRevision] = useState(0);
+  const [sortKey, setSortKey] = useState<PassSortKey>("aos");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const visiblePassTargets = useMemo(() => {
     if (watchlistIds.length > 0) {
       const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
@@ -79,27 +158,27 @@ export function PassesPage() {
     return () => window.removeEventListener(REMINDERS_CHANGED_EVENT, refresh);
   }, []);
 
-  const computePasses = useCallback(async (predictionDays: number) => {
+  const computePasses = useCallback(async () => {
     const requestId = computeRequestRef.current + 1;
     computeRequestRef.current = requestId;
     const streamedPasses: typeof passes = [];
     setLoading(true);
     setError(null);
+    setEmptyNotice(false);
     setComputeProgress(null);
-    setPasses([]);
     try {
       const targets = visiblePassTargets;
 
       if (targets.length === 0) {
         setPasses([]);
-        setError("No satellites selected for pass prediction.");
+        setEmptyNotice(true);
         setComputeProgress(null);
         return;
       }
 
       setComputeProgress({ completed: 0, total: targets.length });
       const start = new Date(Math.floor(Date.now() / 60000) * 60000);
-      const end = new Date(start.getTime() + predictionDays * 86400000);
+      const end = new Date(start.getTime() + days * 86400000);
       const results = await predictPassesBulkStreaming(
         targets,
         observer,
@@ -142,21 +221,18 @@ export function PassesPage() {
         setComputeProgress(null);
       }
     }
-  }, [observer, selectPass, setPasses, visiblePassTargets]);
+  }, [days, observer, selectPass, setPasses, visiblePassTargets]);
+
+  const targetsKey = visibleSatelliteIds.join("|");
+  const computeRef = useRef(computePasses);
 
   useEffect(() => {
-    // Auto-compute only after the slider commits so dragging does not spam predictions.
-    void computePasses(days);
-  }, [computePasses, days]);
+    computeRef.current = computePasses;
+  });
 
-  function handleComputePasses() {
-    // The label/slider show daysDraft; commit it so prediction matches the visible window.
-    if (daysDraft !== days) {
-      setDays(daysDraft);
-      return;
-    }
-    void computePasses(daysDraft);
-  }
+  useEffect(() => {
+    void computeRef.current();
+  }, [targetsKey, days, observer.id]);
 
   const selectedPassSatelliteColor = selectedPass
     ? getSatelliteColor(selectedPass.satelliteId, visibleSatelliteIds)
@@ -166,10 +242,25 @@ export function PassesPage() {
     [observer.minElevationDeg]
   );
 
+  const sortedPasses = useMemo(() => {
+    const direction = sortDirection === "asc" ? 1 : -1;
+    return [...passes].sort((left, right) => comparePasses(left, right, sortKey) * direction);
+  }, [passes, sortDirection, sortKey]);
+
+  function applySort(key: PassSortKey) {
+    if (key === sortKey) {
+      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+
+    setSortKey(key);
+    setSortDirection(PASS_SORT_DEFAULT_DIRECTION[key]);
+  }
+
   function toggleColorByElevation(checked: boolean) {
     setColorByElevation(checked);
     try {
-      sessionStorage.setItem(PASS_COLOR_BY_ELEVATION_KEY, String(checked));
+      localStorage.setItem(PASS_COLOR_BY_ELEVATION_KEY, String(checked));
     } catch {
       // Ignore storage failures in restricted environments.
     }
@@ -182,7 +273,11 @@ export function PassesPage() {
 
     selectPass(pass);
     requestAnimationFrame(() => {
-      geometryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      geometryRef.current?.scrollIntoView({
+        behavior: reduceMotion ? "auto" : "smooth",
+        block: "start"
+      });
     });
   }
 
@@ -210,9 +305,9 @@ export function PassesPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="min-w-0">
             <p className="label">Pass predictor</p>
-            <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">Ground station passes</h1>
+            <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-[var(--text)]">Ground station passes</h1>
             <p className="mt-1.5 text-sm text-[var(--muted)]">
-              Observer {observer.name} · min elevation {observer.minElevationDeg}°
+              Observer {observer.name} · min elevation {observer.minElevationDeg}° · times in {timeZoneAbbreviation()}
             </p>
           </div>
           <div className="flex w-full flex-wrap items-center gap-3 xl:w-auto">
@@ -221,15 +316,23 @@ export function PassesPage() {
                 min={1}
                 max={14}
                 step={1}
-                value={[daysDraft]}
+                value={[sliderDays]}
                 aria-label="Pass prediction window"
-                onValueChange={([value]) => setDaysDraft(value ?? 7)}
-                onValueCommit={([value]) => setDays(value ?? 7)}
+                onValueChange={([value]) => setSliderDays(value ?? 7)}
+                onValueCommit={([value]) => {
+                  const next = value ?? 7;
+                  setDays(next);
+                  try {
+                    localStorage.setItem(PASS_DAYS_KEY, String(next));
+                  } catch {
+                    // Ignore storage failures in restricted environments.
+                  }
+                }}
               />
-              <span className="mono text-right text-xs text-[var(--text)]">{daysDraft}d</span>
+              <span className="mono text-right text-xs text-[var(--text)]">{sliderDays}d</span>
             </div>
             <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-3">
-              <Button disabled={loading} onClick={handleComputePasses}>
+              <Button disabled={loading || visiblePassTargets.length === 0} onClick={() => void computePasses()}>
                 {loading ? "Computing..." : (
                   <>
                     <span className="sm:hidden">Compute</span>
@@ -255,12 +358,25 @@ export function PassesPage() {
           </div>
         </div>
 
-        {error ? <p className="mono mt-4 text-sm text-[var(--danger)]">{error}</p> : null}
+        {error ? <p role="alert" className="mono mt-4 text-sm text-[var(--danger)]">{error}</p> : null}
+        {!error && emptyNotice ? (
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
+            <p>
+              Nothing to predict yet. Track satellites in the catalog (or select one on Details)
+              and passes for the next {days} {days === 1 ? "day" : "days"} will appear here.
+            </p>
+            <Button variant="secondary" size="sm" onClick={() => setPage("catalog")}>
+              Open catalog
+            </Button>
+          </div>
+        ) : null}
         {loading ? (
           <p className="mono mt-4 text-sm text-[var(--muted)]" role="status">
             Computing passes
             {computeProgress ? ` ${computeProgress.completed}/${computeProgress.total}` : ""}
-            {passes.length > 0 ? ` · ${passes.length} found so far` : ""}
+            {computeProgress && computeProgress.completed > 0 && passes.length > 0
+              ? ` · ${passes.length} found so far`
+              : ""}
             ...
           </p>
         ) : null}
@@ -281,8 +397,31 @@ export function PassesPage() {
           ) : null}
         </div>
 
-        <div className="passes-list mt-5 space-y-2 sm:hidden">
-          {passes.map((pass) => {
+        {/* The card list has no column headers to click, so surface sorting explicitly on phones. */}
+        <div className="mt-5 flex items-center gap-2 md:hidden">
+          <label className="text-xs font-medium text-[var(--faint)]" htmlFor="pass-sort-select">
+            Sort by
+          </label>
+          <select
+            id="pass-sort-select"
+            className="max-w-[15rem] text-sm"
+            value={`${sortKey}:${sortDirection}`}
+            onChange={(event) => {
+              const [key, direction] = event.target.value.split(":") as [PassSortKey, SortDirection];
+              setSortKey(key);
+              setSortDirection(direction);
+            }}
+          >
+            <option value="aos:asc">Soonest first</option>
+            <option value="aos:desc">Latest first</option>
+            <option value="maxElevation:desc">Highest elevation</option>
+            <option value="duration:desc">Longest pass</option>
+            <option value="satellite:asc">Satellite name</option>
+          </select>
+        </div>
+
+        <div className={clsx("passes-list mt-3 space-y-2 md:hidden", loading && "opacity-60")}>
+          {sortedPasses.map((pass) => {
             const selected =
               selectedPass?.satelliteId === pass.satelliteId && selectedPass.aos === pass.aos;
             return (
@@ -291,6 +430,7 @@ export function PassesPage() {
                 className={clsx("pass-card", selected && "selected")}
                 role="button"
                 tabIndex={0}
+                aria-current={selected ? "true" : undefined}
                 onClick={() => inspectPass(pass)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
@@ -320,7 +460,7 @@ export function PassesPage() {
                   </span>
                 </span>
                 <span className="mono mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--muted)]">
-                  <span>AOS {formatTimestamp(pass.aos)}</span>
+                  <span title={`Acquisition of signal (pass start) ${formatTimestamp(pass.aos)}`}>Start (AOS) {formatTimestampCompact(pass.aos)}</span>
                   <span>{formatDuration(pass.durationSec)}</span>
                   <span>{pass.illuminated ? "Sunlit" : "In shadow"}</span>
                 </span>
@@ -335,87 +475,142 @@ export function PassesPage() {
               </div>
             );
           })}
-          {!loading && passes.length === 0 ? (
+          {!loading && !emptyNotice && passes.length === 0 ? (
             <p className="py-8 text-center text-sm text-[var(--muted)]">
               No passes found for the selected satellites and time window.
             </p>
           ) : null}
         </div>
 
-        <div className="passes-table mt-5 hidden overflow-auto sm:block">
+        <div className={clsx("passes-table mt-5 hidden overflow-auto md:block", loading && "opacity-60")}>
           <table>
             <thead>
               <tr>
-                <th>Satellite</th>
-                <th>AOS</th>
-                <th>Peak</th>
-                <th>LOS</th>
-                <th>Max El</th>
-                <th>Duration</th>
-                <th>Lit</th>
+                <PassSortHeader columnKey="satellite" activeKey={sortKey} direction={sortDirection} onSort={applySort}>
+                  Satellite
+                </PassSortHeader>
+                <PassSortHeader
+                  columnKey="aos"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={applySort}
+                  title="Acquisition of signal — when the satellite rises above the horizon mask"
+                >
+                  Start (AOS)
+                </PassSortHeader>
+                <PassSortHeader
+                  columnKey="tca"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={applySort}
+                  title="Time of maximum elevation (TCA)"
+                >
+                  Peak time
+                </PassSortHeader>
+                <PassSortHeader
+                  columnKey="los"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={applySort}
+                  title="Loss of signal — when the satellite sets below the horizon mask"
+                >
+                  End (LOS)
+                </PassSortHeader>
+                <PassSortHeader
+                  columnKey="maxElevation"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={applySort}
+                  className="whitespace-nowrap"
+                  title="Highest elevation reached during the pass"
+                >
+                  Max El
+                </PassSortHeader>
+                <PassSortHeader
+                  columnKey="duration"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={applySort}
+                  className="whitespace-nowrap"
+                >
+                  Duration
+                </PassSortHeader>
+                <th className="whitespace-nowrap">Sunlight</th>
                 <th>Alert</th>
               </tr>
             </thead>
             <tbody>
-              {passes.map((pass) => {
+              {sortedPasses.map((pass) => {
                 const selected =
                   selectedPass?.satelliteId === pass.satelliteId && selectedPass.aos === pass.aos;
+                const aosParts = formatDateTimeParts(pass.aos);
+                const tcaParts = formatDateTimeParts(pass.tca);
+                const losParts = formatDateTimeParts(pass.los);
                 return (
-                <tr
-                  key={`${pass.satelliteId}-${pass.aos}`}
-                  className={clsx("cursor-pointer", selected && "bg-[var(--accent-soft)]")}
-                  tabIndex={0}
-                  aria-selected={selected}
-                  aria-label={`${pass.satelliteName} pass. Enter to inspect geometry.`}
-                  onClick={() => selectPass(pass)}
-                  onDoubleClick={() => inspectPass(pass)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      inspectPass(pass);
-                    }
-                  }}
-                  title="Click to select, Enter or double-click to inspect geometry"
-                >
-                  <td>
-                    <span className="inline-flex items-center gap-2">
-                      <span
-                        className="size-2.5 rounded-full border border-[rgba(255,255,255,0.35)]"
-                        style={{ backgroundColor: getSatelliteColor(pass.satelliteId, visibleSatelliteIds) }}
-                        aria-hidden="true"
-                      />
-                      {pass.satelliteName}
-                    </span>
-                  </td>
-                  <td className="mono">{formatTimestamp(pass.aos)}</td>
-                  <td className="mono">{formatTimestamp(pass.tca)}</td>
-                  <td className="mono">{formatTimestamp(pass.los)}</td>
-                  <td
-                    className={colorByElevation ? "font-medium" : undefined}
-                    style={
-                      colorByElevation
-                        ? { color: elevationToColor(pass.maxElevationDeg, elevationColorOptions) }
-                        : undefined
-                    }
+                  <tr
+                    key={`${pass.satelliteId}-${pass.aos}`}
+                    className={clsx("cursor-pointer", selected && "bg-[var(--accent-soft)]")}
+                    tabIndex={0}
+                    aria-label={`${pass.satelliteName}, AOS ${formatTimestamp(pass.aos)}, max elevation ${pass.maxElevationDeg.toFixed(1)} degrees. Press Enter to inspect pass geometry.`}
+                    aria-current={selected ? "true" : undefined}
+                    onClick={() => selectPass(pass)}
+                    onDoubleClick={() => inspectPass(pass)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        inspectPass(pass);
+                      }
+                    }}
+                    title="Press Enter or double-click to inspect pass geometry"
                   >
-                    {pass.maxElevationDeg.toFixed(1)}°
-                  </td>
-                  <td>{formatDuration(pass.durationSec)}</td>
-                  <td>{pass.illuminated ? "Yes" : "No"}</td>
-                  <td>
-                    <Button
-                      size="xs"
-                      variant={hasPassReminder(pass) ? "default" : "secondary"}
-                      onClick={(event) => void toggleReminder(event, pass)}
+                    <td>
+                      <span className="inline-flex items-center gap-2">
+                        <span
+                          className="size-2.5 rounded-full border border-[rgba(255,255,255,0.35)]"
+                          style={{ backgroundColor: getSatelliteColor(pass.satelliteId, visibleSatelliteIds) }}
+                          aria-hidden="true"
+                        />
+                        {pass.satelliteName}
+                      </span>
+                    </td>
+                    <td className="mono">
+                      <div className="whitespace-nowrap text-[var(--text)]">{aosParts.datePart}</div>
+                      <div className="whitespace-nowrap text-[var(--muted)]">{aosParts.timePart}</div>
+                    </td>
+                    <td className="mono">
+                      <div className="whitespace-nowrap text-[var(--text)]">{tcaParts.datePart}</div>
+                      <div className="whitespace-nowrap text-[var(--muted)]">{tcaParts.timePart}</div>
+                    </td>
+                    <td className="mono">
+                      <div className="whitespace-nowrap text-[var(--text)]">{losParts.datePart}</div>
+                      <div className="whitespace-nowrap text-[var(--muted)]">{losParts.timePart}</div>
+                    </td>
+                    <td
+                      className={colorByElevation ? "font-medium" : undefined}
+                      style={
+                        colorByElevation
+                          ? { color: elevationToColor(pass.maxElevationDeg, elevationColorOptions) }
+                          : undefined
+                      }
                     >
-                      {hasPassReminder(pass) ? <BellRing size={13} /> : <Bell size={13} />}
-                      {hasPassReminder(pass) ? "Set" : "Notify"}
-                    </Button>
-                  </td>
-                </tr>
+                      {pass.maxElevationDeg.toFixed(1)}°
+                    </td>
+                    <td className="whitespace-nowrap">{formatDuration(pass.durationSec)}</td>
+                    <td className="whitespace-nowrap">{pass.illuminated ? "Sunlit" : "In shadow"}</td>
+                    <td>
+                      <Button
+                        size="xs"
+                        variant={hasPassReminder(pass) ? "default" : "secondary"}
+                        onClick={(event) => void toggleReminder(event, pass)}
+                      >
+                        {hasPassReminder(pass) ? <BellRing size={13} /> : <Bell size={13} />}
+                        {hasPassReminder(pass) ? "Set" : "Notify"}
+                      </Button>
+                    </td>
+                  </tr>
                 );
               })}
-              {!loading && passes.length === 0 ? (
+              {!loading && !emptyNotice && passes.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-sm text-[var(--muted)]">
                     No passes found for the selected satellites and time window.
@@ -427,14 +622,15 @@ export function PassesPage() {
         </div>
       </section>
 
-      <section ref={geometryRef} className="panel min-w-0 scroll-mt-4 p-4 sm:p-5">
+      <section ref={geometryRef} className="panel min-w-0 scroll-mt-16 p-4 sm:p-5">
         <p className="label">Pass geometry</p>
         {selectedPass ? (
           <div className="mt-4 space-y-5">
             <div>
               <h2 className="text-xl font-semibold tracking-tight text-[var(--text)]">{selectedPass.satelliteName}</h2>
               <p className="mono mt-1.5 text-sm text-[var(--muted)]">
-                TCA {formatTimestamp(selectedPass.tca)} · {selectedPass.maxElevationDeg.toFixed(1)}° ·{" "}
+                <span title="Time of closest approach (maximum elevation)">Closest approach (TCA)</span>{" "}
+                {formatTimestamp(selectedPass.tca)} · {selectedPass.maxElevationDeg.toFixed(1)}° ·{" "}
                 {selectedPass.rangeKmAtTca.toFixed(0)} km
               </p>
             </div>

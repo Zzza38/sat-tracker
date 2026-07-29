@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -149,7 +151,7 @@ select {
   inset: 0 0 auto 0;
   z-index: 10000;
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto minmax(138px, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   height: 42px;
   align-items: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
@@ -160,8 +162,13 @@ select {
   -webkit-app-region: drag;
 }
 
-.electron-titlebar[data-electron="true"] {
-  padding-right: 138px;
+.electron-titlebar[data-electron="true"][data-platform="win32"],
+.electron-titlebar[data-electron="true"][data-platform="linux"] {
+  grid-template-columns: minmax(180px, 1fr) auto minmax(138px, 1fr);
+}
+
+.electron-titlebar[data-electron="true"][data-platform="darwin"] .electron-titlebar-brand {
+  padding-left: 72px;
 }
 
 .electron-titlebar[data-electron="true"][data-platform="darwin"] {
@@ -308,10 +315,25 @@ button.electron-titlebar-satellite-option:not([data-slot]) {
 }
 
 button.electron-titlebar-satellite-option:not([data-slot]):hover,
-button.electron-titlebar-satellite-option[aria-checked="true"]:not([data-slot]),
+button.electron-titlebar-satellite-option:not([data-slot]):focus-visible,
 button.electron-titlebar-satellite-option[aria-selected="true"]:not([data-slot]) {
   background: rgba(108, 140, 255, 0.16);
   color: #ffffff;
+}
+
+button.electron-titlebar-satellite-option:not([data-slot]):focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  outline: none;
+}
+
+.electron-titlebar-satellite-untracked {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 500;
+  padding: 0.06rem 0.32rem;
 }
 
 .mono {
@@ -524,8 +546,12 @@ textarea {
   resize: vertical;
 }
 
-button:not([data-slot]) {
+button:not(:disabled),
+[role="button"]:not(:disabled) {
   cursor: pointer;
+}
+
+button:not([data-slot]) {
   border: 1px solid transparent;
   background: var(--accent);
   color: #fff;
@@ -614,6 +640,9 @@ button.nav-item.active:not([data-slot]) {
 
 .desktop-nav {
   display: block;
+  position: sticky;
+  top: 4.5rem; /* clears the fixed 42px titlebar + .app-content top padding (12-24px per breakpoint) */
+  align-self: flex-start; /* required: overrides .app-content's default align-items: stretch, which would pin the item to full row height */
 }
 
 .main-shell {
@@ -1283,9 +1312,13 @@ button.radar-target-row:not([data-slot]):hover {
   display: flex;
   min-height: 1.75rem;
   align-items: center;
-  cursor: default;
+  cursor: grab;
   touch-action: none;
   user-select: none;
+}
+
+.timeline-infinite-scrubber:active {
+  cursor: grabbing;
 }
 
 .timeline-infinite-scrubber:focus-visible {
@@ -1293,6 +1326,11 @@ button.radar-target-row:not([data-slot]):hover {
 }
 
 .timeline-infinite-scrubber:focus-visible .timeline-infinite-track {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-soft);
+}
+
+.timeline-infinite-scrubber:focus-visible .timeline-infinite-thumb {
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
@@ -1323,6 +1361,15 @@ button.radar-target-row:not([data-slot]):hover {
   border-radius: 999px;
   background: #f8fafc;
   box-shadow: 0 0 0 1px var(--line-strong);
+  transition: box-shadow 150ms ease;
+}
+
+.timeline-infinite-scrubber:hover .timeline-infinite-thumb {
+  box-shadow: 0 0 0 1px var(--line-strong), 0 0 0 5px var(--accent-soft);
+}
+
+.timeline-infinite-scrubber:hover .timeline-infinite-track {
+  background: #333a44;
 }
 
 /* Tappable pass summary rows used instead of the table on phones. */
@@ -1363,6 +1410,14 @@ table {
   overscroll-behavior: contain;
 }
 
+/* Seven columns beside the geometry panel are tight at ~1280px; trim the
+   horizontal cell padding so MAX EL / DURATION / SUNLIGHT all stay visible. */
+.passes-table th,
+.passes-table td {
+  padding-left: 0.45rem;
+  padding-right: 0.45rem;
+}
+
 /* Keep column headers readable while scrolling long tables. */
 .passes-table thead th,
 .catalog-table thead th {
@@ -1387,6 +1442,38 @@ th {
   font-weight: 500;
   letter-spacing: 0.07em;
   text-transform: uppercase;
+}
+
+/* Column headers that sort: look like the surrounding <th>, not like a filled button. */
+button.pass-sort-header:not([data-slot]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  /* No horizontal padding: the passes table is already tight at ~1280px. */
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  white-space: nowrap;
+}
+
+button.pass-sort-header:not([data-slot]):hover {
+  background: transparent;
+  color: var(--text);
+}
+
+button.pass-sort-header:not([data-slot]):focus-visible {
+  border: 0;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  outline: none;
+}
+
+th[aria-sort]:not([aria-sort="none"]) button.pass-sort-header:not([data-slot]) {
+  color: var(--text);
 }
 
 tbody tr {
@@ -1462,6 +1549,18 @@ tbody tr:hover td {
     display: none;
   }
 
+  .electron-titlebar[data-electron="false"] {
+    display: none;
+  }
+
+  .app-shell:has(> .electron-titlebar[data-electron="false"]) {
+    padding-top: 0;
+  }
+
+  .app-shell:has(> .electron-titlebar[data-electron="false"]) > .mx-auto {
+    min-height: 100vh;
+  }
+
   .desktop-nav {
     display: none;
   }
@@ -1482,6 +1581,10 @@ tbody tr:hover td {
 
   .ar-stage {
     border-radius: 11px;
+  }
+
+  .tracker-map-section-expanded {
+    inset: 0 0 calc(4.4rem + env(safe-area-inset-bottom)) 0;
   }
 
   .panel,
@@ -1589,6 +1692,17 @@ tbody tr:hover td {
   }
 }
 
+/* Keyboard focus ring for Map2D satellite markers (SVG <g> with tabindex). */
+[data-satellite-marker]:focus-visible {
+  outline: none;
+}
+
+[data-satellite-marker]:focus-visible > circle:nth-of-type(2) {
+  stroke: #f8fafc;
+  stroke-opacity: 1;
+  stroke-width: 3;
+}
+
 /* Map chrome defaults (desktop-first); mobile overrides follow. */
 .tracker-map-expand-btn,
 .tracker-map-legend-toggle,
@@ -1619,7 +1733,7 @@ button.tracker-map-legend-toggle:not([data-slot]):hover {
 /* Full-map focus mode: cover the shell so gestures own the screen. */
 .tracker-map-section-expanded {
   position: fixed;
-  inset: 0 0 calc(4.4rem + env(safe-area-inset-bottom)) 0;
+  inset: 0;
   z-index: 10050;
   width: auto;
   height: auto !important;
@@ -1628,12 +1742,6 @@ button.tracker-map-legend-toggle:not([data-slot]):hover {
   border-left: 0;
   border-right: 0;
   border-bottom: 0;
-}
-
-@media (min-width: 641px) {
-  .tracker-map-section-expanded {
-    inset: 0;
-  }
 }
 
 @media (max-width: 640px) {
