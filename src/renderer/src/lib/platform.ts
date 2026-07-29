@@ -37,3 +37,19 @@ export async function notifyPass(title: string, body: string) {
 
   return false;
 }
+
+export async function requestNotificationPermission() {
+  if (isElectronRuntime()) {
+    return true;
+  }
+
+  if (!("Notification" in window)) {
+    return false;
+  }
+
+  if (Notification.permission === "default") {
+    return (await Notification.requestPermission()) === "granted";
+  }
+
+  return Notification.permission === "granted";
+}

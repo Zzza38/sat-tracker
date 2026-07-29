@@ -4,6 +4,7 @@ import { Layout } from "./components/Layout";
 import { useApp } from "./context/AppContext";
 
 const CatalogPage = lazy(() => import("./pages/CatalogPage").then((module) => ({ default: module.CatalogPage })));
+const ArPage = lazy(() => import("./pages/ArPage").then((module) => ({ default: module.ArPage })));
 const DetailsPage = lazy(() => import("./pages/DetailsPage").then((module) => ({ default: module.DetailsPage })));
 const PassesPage = lazy(() => import("./pages/PassesPage").then((module) => ({ default: module.PassesPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
@@ -15,6 +16,7 @@ export default function App() {
   const content = {
     catalog: <CatalogPage />,
     tracker: <TrackerPage />,
+    ar: <ArPage />,
     passes: <PassesPage />,
     details: <DetailsPage />,
     settings: <SettingsPage />
