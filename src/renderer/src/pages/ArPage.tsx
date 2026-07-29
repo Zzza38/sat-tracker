@@ -10,8 +10,8 @@ import {
   Settings2
 } from "lucide-react";
 import { computeOrbitSnapshot } from "@/shared/propagation/engine";
-import { predictPassesForSatellite } from "@/shared/passes/predictor-core";
-import type { OrbitSnapshot, SatelliteRecord } from "@/shared/types";
+import { predictPassesBulk } from "@/shared/passes/predictor";
+import type { OrbitSnapshot, PassPrediction, SatelliteRecord } from "@/shared/types";
 import { formatTimestamp } from "@/shared/utils/date";
 import { useApp } from "../context/AppContext";
 import { useTicker } from "../hooks/useTicker";
@@ -45,6 +45,8 @@ const CAMERA_FOV_KEY = "sat-tracker-camera-fov";
 const MAX_AR_SATELLITES = 12;
 const ORBIT_POINTS = 46;
 const ORBIT_STEP_SECONDS = 60;
+/** Pass-window quantisation, so the cached prediction is reusable between runs. */
+const PASS_WINDOW_BUCKET_MS = 5 * 60_000;
 
 interface DeviceOrientationWithCompass extends DeviceOrientationEvent {
   webkitCompassHeading?: number;
@@ -189,7 +191,9 @@ export function ArPage() {
   const orientationFrameRef = useRef<number | null>(null);
   const orientationFrameTimeRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
-  const liveNow = useTicker(500);
+  const viewRef = useRef<ViewDirection>({ headingDeg: 0, elevationDeg: 0, rollDeg: 0 });
+  const hasFixRef = useRef(false);
+  const liveNow = useTicker(1000);
   const [cameraActive, setCameraActive] = useState(false);
   const [arStarted, setArStarted] = useState(false);
   const [sensorActive, setSensorActive] = useState(false);
@@ -253,21 +257,43 @@ export function ArPage() {
     });
   }, [getSatelliteColor, observer, orbitTimeKey, visibleIds, visibleSatellites]);
   const focus = skyTargets.find((target) => target.satellite.id === selectedSatelliteId) ?? skyTargets[0];
-  const nextPass = useMemo(() => {
-    if (!focus) {
-      return null;
+
+  // A seven-day scan is ~20k propagations. Run it on the shared prediction
+  // worker instead of the render thread, and quantise the window so repeat
+  // runs hit the prediction cache rather than recomputing every tick.
+  const passWindowStart = Math.floor(liveNow.getTime() / PASS_WINDOW_BUCKET_MS) * PASS_WINDOW_BUCKET_MS;
+  const [nextPass, setNextPass] = useState<PassPrediction | null>(null);
+  const focusSatellite = focus?.satellite;
+
+  useEffect(() => {
+    if (!focusSatellite) {
+      setNextPass(null);
+      return;
     }
-    try {
-      return predictPassesForSatellite(focus.satellite, observer, {
-        start: new Date(),
-        end: new Date(Date.now() + 7 * 86_400_000),
-        minElevationDeg: observer.minElevationDeg,
-        stepSeconds: 30
-      })[0] ?? null;
-    } catch {
-      return null;
-    }
-  }, [focus?.satellite, observer, orbitTimeKey]);
+
+    let cancelled = false;
+    predictPassesBulk([focusSatellite], observer, {
+      start: new Date(passWindowStart),
+      end: new Date(passWindowStart + 7 * 86_400_000),
+      minElevationDeg: observer.minElevationDeg,
+      stepSeconds: 30
+    })
+      .then((passes) => {
+        if (!cancelled) {
+          setNextPass(passes.find((pass) => pass.los >= new Date().toISOString()) ?? null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNextPass(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [focusSatellite, observer, passWindowStart]);
+
   const reminderSet = nextPass ? hasPassReminder(nextPass) : false;
 
   useEffect(() => {
@@ -305,6 +331,11 @@ export function ArPage() {
       }
     };
   }, []);
+
+  function applyView(next: ViewDirection) {
+    viewRef.current = next;
+    setView(next);
+  }
 
   function syncFrameSize() {
     const video = videoRef.current;
@@ -375,6 +406,7 @@ export function ArPage() {
       orientationSourceRef.current = null;
       lastAbsoluteOrientationAtRef.current = 0;
       orientationFrameTimeRef.current = null;
+      hasFixRef.current = false;
       if (orientationFrameRef.current !== null) {
         window.cancelAnimationFrame(orientationFrameRef.current);
         orientationFrameRef.current = null;
@@ -384,9 +416,22 @@ export function ArPage() {
         const previousTimestamp = orientationFrameTimeRef.current ?? timestamp;
         orientationFrameTimeRef.current = timestamp;
         const factor = orientationSmoothingFactor(timestamp - previousTimestamp);
-        setView((current) =>
-          interpolateViewDirection(current, orientationTargetRef.current, factor)
+        const next = interpolateViewDirection(
+          viewRef.current,
+          orientationTargetRef.current,
+          factor
         );
+
+        if (next === viewRef.current) {
+          // Caught up with the sensor. Park the loop rather than re-rendering
+          // every frame with an unchanged view; the next event restarts it.
+          orientationFrameRef.current = null;
+          orientationFrameTimeRef.current = null;
+          return;
+        }
+
+        viewRef.current = next;
+        setView(next);
         orientationFrameRef.current = window.requestAnimationFrame(animateOrientation);
       };
 
@@ -422,8 +467,14 @@ export function ArPage() {
           }
           orientationSourceRef.current = source;
           orientationTargetRef.current = direction;
-          if (orientationFrameRef.current === null) {
+          if (!hasFixRef.current) {
+            // First reading: jump straight there instead of easing in from north.
+            hasFixRef.current = true;
+            viewRef.current = direction;
             setView(direction);
+          }
+          if (orientationFrameRef.current === null) {
+            orientationFrameTimeRef.current = null;
             orientationFrameRef.current = window.requestAnimationFrame(animateOrientation);
           }
           setSensorActive(true);
@@ -786,7 +837,7 @@ export function ArPage() {
                 min="0"
                 max="359"
                 value={view.headingDeg}
-                onChange={(event) => setView((current) => ({ ...current, headingDeg: Number(event.target.value) }))}
+                onChange={(event) => applyView({ ...viewRef.current, headingDeg: Number(event.target.value) })}
               />
             </label>
             <label>
@@ -796,7 +847,7 @@ export function ArPage() {
                 min="-90"
                 max="90"
                 value={view.elevationDeg}
-                onChange={(event) => setView((current) => ({ ...current, elevationDeg: Number(event.target.value) }))}
+                onChange={(event) => applyView({ ...viewRef.current, elevationDeg: Number(event.target.value) })}
               />
             </label>
           </div>

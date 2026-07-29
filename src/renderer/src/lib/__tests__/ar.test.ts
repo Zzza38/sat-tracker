@@ -87,8 +87,38 @@ describe("AR pointing math", () => {
 
   it("uses frame time to keep smoothing consistent across refresh rates", () => {
     expect(orientationSmoothingFactor(0)).toBe(0);
-    expect(orientationSmoothingFactor(110)).toBeCloseTo(1 - Math.exp(-1));
+    expect(orientationSmoothingFactor(110, 110)).toBeCloseTo(1 - Math.exp(-1));
     expect(orientationSmoothingFactor(1000)).toBeGreaterThan(0.99);
+  });
+
+  it("closes 90% of the gap within 100ms at any frame rate", () => {
+    const remainingAfter = (frameMs: number, totalMs: number) => {
+      let remaining = 1;
+      for (let elapsed = 0; elapsed < totalMs; elapsed += frameMs) {
+        remaining *= 1 - orientationSmoothingFactor(frameMs);
+      }
+      return remaining;
+    };
+
+    // The old 110ms response left ~40% of the gap outstanding at this point,
+    // which is the tail that read as the overlay trailing the camera.
+    expect(remainingAfter(1000 / 60, 100)).toBeLessThan(0.1);
+    expect(remainingAfter(1000 / 30, 100)).toBeLessThan(0.1);
+    expect(remainingAfter(1000 / 60, 100)).toBeCloseTo(remainingAfter(1000 / 30, 100), 1);
+  });
+
+  it("returns the same object once it has caught up, so renders can stop", () => {
+    const target = { headingDeg: 159, elevationDeg: -23, rollDeg: 4 };
+    let current = { headingDeg: 158.99, elevationDeg: -23, rollDeg: 4 };
+
+    // First call snaps exactly onto the target.
+    const snapped = interpolateViewDirection(current, target, 0.5);
+    expect(snapped).not.toBe(current);
+    expect(snapped.headingDeg).toBe(159);
+
+    // Every later call hands back the identical reference.
+    current = snapped as typeof current;
+    expect(interpolateViewDirection(current, target, 0.5)).toBe(current);
   });
 
   it("does not let a relative orientation stream override an absolute compass", () => {

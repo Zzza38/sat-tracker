@@ -82,6 +82,17 @@ function cross(a: Vector3, b: Vector3): Vector3 {
   };
 }
 
+/**
+ * Time constant of the orientation filter. This is pure display latency, so it
+ * is kept just long enough to take the jitter off the sensor and no longer:
+ * roughly two frames to settle rather than the ~330ms tail that read as the
+ * overlay lagging behind the camera.
+ */
+export const ORIENTATION_RESPONSE_MS = 30;
+
+/** Below this the move is sub-pixel, so it is not worth a frame. */
+const VIEW_EPSILON_DEG = 0.02;
+
 export function interpolateViewDirection(
   current: ViewDirection,
   target: ViewDirection,
@@ -90,18 +101,42 @@ export function interpolateViewDirection(
   const factor = Math.max(0, Math.min(1, amount));
   const currentRoll = current.rollDeg ?? 0;
   const targetRoll = target.rollDeg ?? 0;
+  const headingDelta = signedAngleDifference(target.headingDeg, current.headingDeg);
+  const elevationDelta = target.elevationDeg - current.elevationDeg;
+  const rollDelta = signedAngleDifference(targetRoll, currentRoll);
+
+  if (
+    Math.abs(headingDelta) < VIEW_EPSILON_DEG &&
+    Math.abs(elevationDelta) < VIEW_EPSILON_DEG &&
+    Math.abs(rollDelta) < VIEW_EPSILON_DEG
+  ) {
+    // Snap once, then keep handing back the same object. Returning an
+    // unchanged reference is what lets the caller park the animation loop and
+    // stop re-rendering while the device is held still.
+    const settled =
+      current.headingDeg === target.headingDeg &&
+      current.elevationDeg === target.elevationDeg &&
+      currentRoll === targetRoll;
+    return settled
+      ? current
+      : {
+          headingDeg: target.headingDeg,
+          elevationDeg: target.elevationDeg,
+          rollDeg: targetRoll
+        };
+  }
+
   return {
-    headingDeg: normalizeDegrees(
-      current.headingDeg + signedAngleDifference(target.headingDeg, current.headingDeg) * factor
-    ),
-    elevationDeg: current.elevationDeg + (target.elevationDeg - current.elevationDeg) * factor,
-    rollDeg: normalizeDegrees(
-      currentRoll + signedAngleDifference(targetRoll, currentRoll) * factor
-    )
+    headingDeg: normalizeDegrees(current.headingDeg + headingDelta * factor),
+    elevationDeg: current.elevationDeg + elevationDelta * factor,
+    rollDeg: normalizeDegrees(currentRoll + rollDelta * factor)
   };
 }
 
-export function orientationSmoothingFactor(deltaMs: number, responseMs = 110) {
+export function orientationSmoothingFactor(
+  deltaMs: number,
+  responseMs = ORIENTATION_RESPONSE_MS
+) {
   if (responseMs <= 0) {
     return 1;
   }
