@@ -18,6 +18,9 @@ import { useTicker } from "../hooks/useTicker";
 import { Button } from "../components/ui/button";
 import { Slider } from "../components/ui/slider";
 import {
+  DEFAULT_CAMERA_FOV_DEG,
+  MAX_CAMERA_FOV_DEG,
+  MIN_CAMERA_FOV_DEG,
   directionFromOrientation,
   dishFaceElevation,
   interpolateViewDirection,
@@ -25,6 +28,8 @@ import {
   projectLookAngle,
   shouldAcceptOrientationSource,
   signedAngleDifference,
+  stageFieldOfView,
+  type FieldOfView,
   type OrientationSource,
   type ViewDirection
 } from "../lib/ar";
@@ -36,6 +41,7 @@ import {
 import { requestNotificationPermission } from "../lib/platform";
 
 const DISH_OFFSET_KEY = "sat-tracker-dish-offset";
+const CAMERA_FOV_KEY = "sat-tracker-camera-fov";
 const MAX_AR_SATELLITES = 12;
 const ORBIT_POINTS = 46;
 const ORBIT_STEP_SECONDS = 60;
@@ -62,6 +68,32 @@ interface SkyTarget {
 function readDishOffset() {
   const stored = Number(localStorage.getItem(DISH_OFFSET_KEY));
   return Number.isFinite(stored) ? Math.max(0, Math.min(45, stored)) : 0;
+}
+
+function readCameraFov() {
+  const raw = localStorage.getItem(CAMERA_FOV_KEY);
+  const stored = Number(raw);
+  if (raw === null || !Number.isFinite(stored) || stored <= 0) {
+    return DEFAULT_CAMERA_FOV_DEG;
+  }
+  return Math.max(MIN_CAMERA_FOV_DEG, Math.min(MAX_CAMERA_FOV_DEG, stored));
+}
+
+/**
+ * Landscape rotates the screen axes away from the device axes, so the overlay
+ * needs the current angle to stay square with the camera frame.
+ */
+function readScreenAngle() {
+  const angle = window.screen?.orientation?.angle;
+  if (typeof angle === "number") {
+    return angle;
+  }
+  const legacy = (window as { orientation?: number }).orientation;
+  return typeof legacy === "number" ? normalizeScreenAngle(legacy) : 0;
+}
+
+function normalizeScreenAngle(value: number) {
+  return ((value % 360) + 360) % 360;
 }
 
 function safeSnapshot(satellite: SatelliteRecord, date: Date, observer: ReturnType<typeof useApp>["observer"]) {
@@ -98,7 +130,8 @@ function orbitSegments(
   orbit: OrbitSnapshot[],
   view: ViewDirection,
   width: number,
-  height: number
+  height: number,
+  fov: FieldOfView
 ) {
   const segments: string[][] = [];
   let segment: string[] = [];
@@ -109,9 +142,11 @@ function orbitSegments(
       point.elevationDeg,
       view,
       width,
-      height
+      height,
+      fov
     );
     const withinMargin =
+      !projected.behind &&
       projected.x >= -width * 0.12 &&
       projected.x <= width * 1.12 &&
       projected.y >= -height * 0.12 &&
@@ -165,7 +200,21 @@ export function ArPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [stageSize, setStageSize] = useState({ width: 390, height: 700 });
+  const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
+  const [cameraFov, setCameraFov] = useState(readCameraFov);
   const [, setReminderRevision] = useState(0);
+
+  const fieldOfView = useMemo(
+    () =>
+      stageFieldOfView(
+        stageSize.width,
+        stageSize.height,
+        frameSize.width,
+        frameSize.height,
+        cameraFov
+      ),
+    [cameraFov, frameSize.height, frameSize.width, stageSize.height, stageSize.width]
+  );
 
   const visibleSatellites = useMemo(() => {
     const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
@@ -256,6 +305,18 @@ export function ArPage() {
       }
     };
   }, []);
+
+  function syncFrameSize() {
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+    setFrameSize((current) =>
+      current.width === video.videoWidth && current.height === video.videoHeight
+        ? current
+        : { width: video.videoWidth, height: video.videoHeight }
+    );
+  }
 
   function showToast(message: string) {
     if (toastTimerRef.current !== null) {
@@ -348,11 +409,13 @@ export function ArPage() {
           return;
         }
 
-        const direction = directionFromOrientation(
-          event.alpha,
-          event.beta,
-          compassEvent.webkitCompassHeading
-        );
+        const direction = directionFromOrientation({
+          alpha: event.alpha,
+          beta: event.beta,
+          gamma: event.gamma,
+          compassHeading: compassEvent.webkitCompassHeading,
+          screenAngleDeg: readScreenAngle()
+        });
         if (direction) {
           if (source === "absolute") {
             lastAbsoluteOrientationAtRef.current = now;
@@ -417,6 +480,7 @@ export function ArPage() {
       videoRef.current.srcObject = null;
     }
     setCameraActive(false);
+    setFrameSize({ width: 0, height: 0 });
     setStatus(sensorActive ? "Orientation live · camera off" : "AR paused");
   }
 
@@ -445,7 +509,16 @@ export function ArPage() {
   return (
     <div className="ar-page">
       <section ref={stageRef} className="ar-stage" aria-label="Augmented reality satellite finder">
-        <video ref={videoRef} className="ar-camera" autoPlay playsInline muted aria-hidden="true" />
+        <video
+          ref={videoRef}
+          className="ar-camera"
+          autoPlay
+          playsInline
+          muted
+          aria-hidden="true"
+          onLoadedMetadata={syncFrameSize}
+          onResize={syncFrameSize}
+        />
         <div className="ar-sky-fallback" aria-hidden="true" />
         <div className="ar-vignette" aria-hidden="true" />
 
@@ -516,7 +589,13 @@ export function ArPage() {
             className="ar-reticle"
           />
           {skyTargets.flatMap((target) =>
-            orbitSegments(target.orbit, view, stageSize.width, stageSize.height).map((points, index) => (
+            orbitSegments(
+              target.orbit,
+              view,
+              stageSize.width,
+              stageSize.height,
+              fieldOfView
+            ).map((points, index) => (
               <polyline
                 key={`${target.satellite.id}-orbit-${index}`}
                 points={points.join(" ")}
@@ -534,7 +613,8 @@ export function ArPage() {
               target.snapshot.elevationDeg,
               view,
               stageSize.width,
-              stageSize.height
+              stageSize.height,
+              fieldOfView
             );
             if (!position.visible) {
               return null;
@@ -566,7 +646,8 @@ export function ArPage() {
               focusDishElevation,
               view,
               stageSize.width,
-              stageSize.height
+              stageSize.height,
+              fieldOfView
             );
             if (!dishPosition.visible) {
               return null;
@@ -586,12 +667,16 @@ export function ArPage() {
           dishOffset > 0 ? focusDishElevation : focus.snapshot.elevationDeg,
           view,
           stageSize.width,
-          stageSize.height
+          stageSize.height,
+          fieldOfView
         ).visible ? (
           <div
             className="ar-offscreen-cue"
             style={{
-              transform: `translateX(-50%) rotate(${Math.atan2(azimuthError, elevationError) * 180 / Math.PI}deg)`
+              // Screen space, so the arrow has to unwind the device roll.
+              transform: `translateX(-50%) rotate(${
+                (Math.atan2(azimuthError, elevationError) * 180) / Math.PI - (view.rollDeg ?? 0)
+              }deg)`
             }}
           >
             ↑
@@ -649,6 +734,29 @@ export function ArPage() {
             </div>
             <p>
               Satellite elevation is the signal path. Dish-face elevation subtracts the offset, which is the angle you physically set on an offset-fed dish.
+            </p>
+
+            <div className="ar-settings-heading">
+              <div>
+                <span className="label">Camera calibration</span>
+                <strong>Lens field of view</strong>
+              </div>
+              <span className="mono">{cameraFov.toFixed(0)}°</span>
+            </div>
+            <Slider
+              min={MIN_CAMERA_FOV_DEG}
+              max={MAX_CAMERA_FOV_DEG}
+              step={0.5}
+              value={[cameraFov]}
+              aria-label="Camera field of view"
+              onValueChange={([value]) => {
+                const next = value ?? DEFAULT_CAMERA_FOV_DEG;
+                setCameraFov(next);
+                localStorage.setItem(CAMERA_FOV_KEY, String(next));
+              }}
+            />
+            <p>
+              Measured across the long edge of the camera frame. If markers slide against the scene as you pan, nudge this until a marker stays pinned to the same spot in the room.
             </p>
             <button
               type="button"
