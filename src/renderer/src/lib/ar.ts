@@ -337,3 +337,16 @@ export function projectLookAngle(
     visible: x >= 0 && x <= width && y >= 0 && y <= height
   };
 }
+
+/**
+ * Next upcoming look window: the first pass whose acquisition (AOS) is still
+ * in the future. Passes already in progress (AOS past, LOS still ahead) are
+ * skipped so reminders and the AR readout do not target a past start time.
+ */
+export function selectNextLookPass<T extends { aos: string }>(
+  passes: readonly T[],
+  now: Date | string = new Date()
+): T | null {
+  const nowIso = typeof now === "string" ? now : now.toISOString();
+  return passes.find((pass) => pass.aos >= nowIso) ?? null;
+}

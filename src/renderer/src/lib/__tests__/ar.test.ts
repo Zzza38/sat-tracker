@@ -5,6 +5,7 @@ import {
   interpolateViewDirection,
   orientationSmoothingFactor,
   projectLookAngle,
+  selectNextLookPass,
   shouldAcceptOrientationSource,
   signedAngleDifference,
   stageFieldOfView,
@@ -180,5 +181,23 @@ describe("AR pointing math", () => {
     // frame's long edge, so vertical has to be the wider of the two.
     expect(fov.verticalDeg).toBeGreaterThan(fov.horizontalDeg);
     expect(fov.verticalDeg).toBeCloseTo(68, 6);
+  });
+
+  it("picks the next look by future AOS, not an in-progress pass with LOS ahead", () => {
+    const now = "2026-07-30T12:00:00.000Z";
+    const inProgress = {
+      aos: "2026-07-30T11:55:00.000Z",
+      los: "2026-07-30T12:05:00.000Z"
+    };
+    const upcoming = {
+      aos: "2026-07-30T14:10:00.000Z",
+      los: "2026-07-30T14:18:00.000Z"
+    };
+
+    // Filtering on LOS would wrongly keep the in-progress pass and surface its
+    // already-past acquisition time as the "next" look window.
+    expect(selectNextLookPass([inProgress, upcoming], now)).toBe(upcoming);
+    expect(selectNextLookPass([inProgress], now)).toBeNull();
+    expect(selectNextLookPass([upcoming], now)).toBe(upcoming);
   });
 });

@@ -26,6 +26,7 @@ import {
   interpolateViewDirection,
   orientationSmoothingFactor,
   projectLookAngle,
+  selectNextLookPass,
   shouldAcceptOrientationSource,
   signedAngleDifference,
   stageFieldOfView,
@@ -299,7 +300,7 @@ export function ArPage() {
 
   const nextPass = useMemo(() => {
     const nowIso = new Date(orbitTimeKey * 30_000).toISOString();
-    return predictedPasses.find((pass) => pass.los >= nowIso) ?? null;
+    return selectNextLookPass(predictedPasses, nowIso);
   }, [orbitTimeKey, predictedPasses]);
 
   const reminderSet = nextPass ? hasPassReminder(nextPass) : false;
