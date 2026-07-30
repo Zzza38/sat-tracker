@@ -261,13 +261,16 @@ export function ArPage() {
   // A seven-day scan is ~20k propagations. Run it on the shared prediction
   // worker instead of the render thread, and quantise the window so repeat
   // runs hit the prediction cache rather than recomputing every tick.
+  // Selection of the still-active "next" pass is separate: the worker only
+  // refreshes on the five-minute bucket, but after a pass's LOS we must drop
+  // it from the readout without waiting for that bucket to roll.
   const passWindowStart = Math.floor(liveNow.getTime() / PASS_WINDOW_BUCKET_MS) * PASS_WINDOW_BUCKET_MS;
-  const [nextPass, setNextPass] = useState<PassPrediction | null>(null);
+  const [predictedPasses, setPredictedPasses] = useState<PassPrediction[]>([]);
   const focusSatellite = focus?.satellite;
 
   useEffect(() => {
     if (!focusSatellite) {
-      setNextPass(null);
+      setPredictedPasses([]);
       return;
     }
 
@@ -280,12 +283,12 @@ export function ArPage() {
     })
       .then((passes) => {
         if (!cancelled) {
-          setNextPass(passes.find((pass) => pass.los >= new Date().toISOString()) ?? null);
+          setPredictedPasses(passes);
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setNextPass(null);
+          setPredictedPasses([]);
         }
       });
 
@@ -293,6 +296,11 @@ export function ArPage() {
       cancelled = true;
     };
   }, [focusSatellite, observer, passWindowStart]);
+
+  const nextPass = useMemo(() => {
+    const nowIso = new Date(orbitTimeKey * 30_000).toISOString();
+    return predictedPasses.find((pass) => pass.los >= nowIso) ?? null;
+  }, [orbitTimeKey, predictedPasses]);
 
   const reminderSet = nextPass ? hasPassReminder(nextPass) : false;
 
