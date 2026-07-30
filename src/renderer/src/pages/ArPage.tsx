@@ -262,9 +262,10 @@ export function ArPage() {
   // A seven-day scan is ~20k propagations. Run it on the shared prediction
   // worker instead of the render thread, and quantise the window so repeat
   // runs hit the prediction cache rather than recomputing every tick.
-  // Selection of the still-active "next" pass is separate: the worker only
-  // refreshes on the five-minute bucket, but after a pass's LOS we must drop
-  // it from the readout without waiting for that bucket to roll.
+  // Selection of the next upcoming look (future AOS) is separate: the worker
+  // only refreshes on the five-minute bucket, but as time advances we must
+  // drop past/in-progress windows from the readout without waiting for that
+  // bucket to roll.
   const passWindowStart = Math.floor(liveNow.getTime() / PASS_WINDOW_BUCKET_MS) * PASS_WINDOW_BUCKET_MS;
   const [predictedPasses, setPredictedPasses] = useState<PassPrediction[]>([]);
   const focusSatellite = focus?.satellite;
