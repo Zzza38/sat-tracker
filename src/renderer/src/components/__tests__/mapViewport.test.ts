@@ -22,6 +22,13 @@ describe("mapViewport", () => {
     expect(projection.offsetX).toBeLessThan(0);
   });
 
+  it("uses contain/meet projection when zoomed out for letterboxing", () => {
+    const projection = getSvgProjection({ width: 800, height: 380 }, "contain");
+    expect(projection.scale).toBeCloseTo(380 / WORLD_HEIGHT, 5);
+    expect(projection.offsetY).toBe(0);
+    expect(projection.offsetX).toBeGreaterThan(0);
+  });
+
   it("maps client coordinates through the cover projection", () => {
     const bounds = { left: 10, top: 20, width: 366, height: 390 };
     const projection = getSvgProjection(bounds);

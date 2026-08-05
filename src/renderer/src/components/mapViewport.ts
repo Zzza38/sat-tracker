@@ -45,11 +45,19 @@ export function clampPanY(value: number, zoom: number) {
   return clamp(value, WORLD_HEIGHT - WORLD_HEIGHT * zoom, 0);
 }
 
-/** Cover/slice projection so the map fills the element without letterboxing at 1×. */
-export function getSvgProjection(bounds: { width: number; height: number }): SvgProjection {
+export type SvgFitMode = "cover" | "contain";
+
+/** Cover/slice fills the element; contain/meet letterboxes so the full viewBox stays visible. */
+export function getSvgProjection(
+  bounds: { width: number; height: number },
+  fit: SvgFitMode = "cover"
+): SvgProjection {
   const width = Math.max(bounds.width, 1);
   const height = Math.max(bounds.height, 1);
-  const scale = Math.max(width / WORLD_WIDTH, height / WORLD_HEIGHT);
+  const scale =
+    fit === "contain"
+      ? Math.min(width / WORLD_WIDTH, height / WORLD_HEIGHT)
+      : Math.max(width / WORLD_WIDTH, height / WORLD_HEIGHT);
 
   return {
     scale,
@@ -63,9 +71,10 @@ export function getSvgProjection(bounds: { width: number; height: number }): Svg
 export function clientToViewBox(
   bounds: DOMRect | { left: number; top: number; width: number; height: number },
   clientX: number,
-  clientY: number
+  clientY: number,
+  fit: SvgFitMode = "cover"
 ): Point {
-  const projection = getSvgProjection(bounds);
+  const projection = getSvgProjection(bounds, fit);
   return {
     x: (clientX - bounds.left - projection.offsetX) / projection.scale,
     y: (clientY - bounds.top - projection.offsetY) / projection.scale
@@ -75,9 +84,10 @@ export function clientToViewBox(
 export function clientDeltaToViewBox(
   bounds: { width: number; height: number },
   deltaX: number,
-  deltaY: number
+  deltaY: number,
+  fit: SvgFitMode = "cover"
 ): Point {
-  const { scale } = getSvgProjection(bounds);
+  const { scale } = getSvgProjection(bounds, fit);
   return {
     x: deltaX / scale,
     y: deltaY / scale
