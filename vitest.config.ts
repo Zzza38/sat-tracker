@@ -6,7 +6,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve("src"),
-      "#wasm-multi-thread": wasmMultiThreadStub
+      "#wasm-multi-thread": wasmMultiThreadStub,
+      "virtual:pwa-register": path.resolve("src/renderer/src/lib/pwa-register-stub.ts")
     }
   },
   define: {

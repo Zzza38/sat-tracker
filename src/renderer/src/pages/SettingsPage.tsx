@@ -562,6 +562,17 @@ export function SettingsPage() {
             The catalog refreshes from all configured sources when local TLE data is older than{" "}
             {settings.refreshIntervalValue} {settings.refreshIntervalUnit} ({staleAfterHours} hours).
           </p>
+
+          <div className="mt-6 border-t border-[var(--line)] pt-5">
+            <p className="label">Offline mode</p>
+            <h3 className="mt-1.5 text-base font-semibold text-[var(--text)]">Works without a connection</h3>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Saved satellites, observer sites, and pass math stay available offline. The web app
+              caches itself after the first visit. Without cached feeds, a bundled starter catalog
+              (ISS, HST, weather satellites, and more) loads automatically. Paste TLEs anytime;
+              reconnect to refresh CelesTrak sources.
+            </p>
+          </div>
         </section>
 
         <section className="panel p-5">
