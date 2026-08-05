@@ -1,11 +1,29 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent
+} from "react";
 import { createPortal } from "react-dom";
-import { Maximize2, Minimize2, Minus, Plus, RotateCcw } from "lucide-react";
+import {
+  Crosshair,
+  Layers,
+  Maximize2,
+  Minimize2,
+  Minus,
+  Navigation,
+  Plus,
+  RotateCcw
+} from "lucide-react";
 import { getMoonSubpoint, getSunSubpoint } from "@/shared/astro/lighting";
 import { GroundTrackPoint } from "@/shared/types";
 import { Button } from "./ui/button";
 import {
   MAX_ZOOM,
+  MIN_ZOOM,
+  centerViewportOn,
+  clampPanY,
   clientDeltaToViewBox,
   clientToViewBox,
   panViewport,
@@ -14,6 +32,11 @@ import {
   zoomViewport,
   type MapViewport
 } from "./mapViewport";
+import {
+  MAP_VIEWPORT_STORAGE_KEY,
+  type PassOverlay,
+  type TrackerMapLayers
+} from "./trackerMapTypes";
 import { WORLD_HEIGHT, WORLD_MAP_ASSET_URL, WORLD_WIDTH, projectLonLat } from "./worldMap";
 
 export interface TrackedSatelliteView {
@@ -35,8 +58,14 @@ interface Map2DProps {
   observer: { latitude: number; longitude: number };
   satellites: TrackedSatelliteView[];
   currentTime: Date;
-  showSunMoon: boolean;
-  onSatelliteDoubleClick?: (satelliteId: string) => void;
+  layers: TrackerMapLayers;
+  onLayersChange?: (layers: TrackerMapLayers) => void;
+  followSelected?: boolean;
+  onFollowSelectedChange?: (follow: boolean) => void;
+  passOverlay?: PassOverlay | null;
+  focusToken?: number;
+  immersiveExpand?: boolean;
+  onSatelliteSelect?: (satelliteId: string) => void;
 }
 
 interface ProjectedPoint {
@@ -73,7 +102,34 @@ const DEG = 180 / Math.PI;
 const DOUBLE_TAP_MS = 280;
 const DOUBLE_TAP_MAX_DISTANCE_PX = 28;
 const SUN_MOON_STEP_MS = 30000;
+const EMPTY_MAP_FILL = "#0b0f14";
 const DEFAULT_VIEWPORT: MapViewport = { panX: 0, panY: 0, zoom: 1 };
+const LABEL_ZOOM_THRESHOLD = 1.35;
+const FOOTPRINT_ZOOM_THRESHOLD = 0.85;
+
+function readStoredViewport(): MapViewport {
+  try {
+    const raw = JSON.parse(localStorage.getItem(MAP_VIEWPORT_STORAGE_KEY) ?? "{}") as Partial<MapViewport>;
+    const zoom = typeof raw.zoom === "number" ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, raw.zoom)) : 1;
+    const panX = typeof raw.panX === "number" ? raw.panX : 0;
+    const panY = typeof raw.panY === "number" ? raw.panY : 0;
+    return {
+      zoom,
+      panX,
+      panY: clampPanY(panY, zoom)
+    };
+  } catch {
+    return DEFAULT_VIEWPORT;
+  }
+}
+
+function writeStoredViewport(viewport: MapViewport) {
+  try {
+    localStorage.setItem(MAP_VIEWPORT_STORAGE_KEY, JSON.stringify(viewport));
+  } catch {
+    /* restricted environments */
+  }
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -216,21 +272,78 @@ function worldCopyRange(panX: number, zoom: number) {
   return Array.from({ length: end - start + 1 }, (_, index) => start + index);
 }
 
+function filterPassTrack(points: GroundTrackPoint[], aos: string, los: string) {
+  const start = new Date(aos).getTime();
+  const end = new Date(los).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return [];
+  }
+  return points.filter((point) => {
+    const time = new Date(point.timestamp).getTime();
+    return time >= start && time <= end;
+  });
+}
+
+function shouldShowLabel(
+  satellite: TrackedSatelliteView,
+  layers: TrackerMapLayers,
+  zoom: number,
+  satelliteCount: number
+) {
+  if (!layers.labels) {
+    return satellite.selected;
+  }
+  if (satellite.selected) {
+    return true;
+  }
+  if (zoom < LABEL_ZOOM_THRESHOLD) {
+    return false;
+  }
+  return satelliteCount <= 20;
+}
+
+function shouldShowFootprint(
+  satellite: TrackedSatelliteView,
+  layers: TrackerMapLayers,
+  zoom: number,
+  satelliteCount: number
+) {
+  if (!layers.footprints) {
+    return false;
+  }
+  if (satellite.selected) {
+    return true;
+  }
+  if (zoom < FOOTPRINT_ZOOM_THRESHOLD) {
+    return false;
+  }
+  return satelliteCount <= 30;
+}
+
 export function Map2D({
   observer,
   satellites,
   currentTime,
-  showSunMoon,
-  onSatelliteDoubleClick
+  layers,
+  onLayersChange,
+  followSelected = false,
+  onFollowSelectedChange,
+  passOverlay = null,
+  focusToken = 0,
+  immersiveExpand = false,
+  onSatelliteSelect
 }: Map2DProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const gestureRef = useRef<ActiveGesture | null>(null);
   const viewportRef = useRef<MapViewport>(DEFAULT_VIEWPORT);
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
-  const [viewport, setViewport] = useState<MapViewport>(DEFAULT_VIEWPORT);
+  const followUnlockedByGestureRef = useRef(false);
+  const [viewport, setViewport] = useState<MapViewport>(() => readStoredViewport());
   const [expanded, setExpanded] = useState(false);
   const [legendOpen, setLegendOpen] = useState(false);
+  const [layersOpen, setLayersOpen] = useState(false);
   const [gestureHintVisible, setGestureHintVisible] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
   const worldCopies = useMemo(
     () => worldCopyRange(viewport.panX, viewport.zoom),
     [viewport.panX, viewport.zoom]
@@ -250,18 +363,41 @@ export function Map2D({
     return projectLonLat([moon.longitudeDeg, moon.latitudeDeg]);
   }, [sunMoonTimeKey]);
   const nightOverlay = useMemo(() => getNightOverlay(sunSubpoint, 3), [sunSubpoint]);
+  const selectedSatellite = satellites.find((satellite) => satellite.selected) ?? satellites[0];
+  const passTrackPath = useMemo(() => {
+    if (!passOverlay) {
+      return null;
+    }
+    const satellite = satellites.find((item) => item.id === passOverlay.satelliteId);
+    if (!satellite) {
+      return null;
+    }
+    const points = filterPassTrack(satellite.groundTrack, passOverlay.aos, passOverlay.los);
+    if (points.length < 2) {
+      return null;
+    }
+    return {
+      path: trackPath(points),
+      color: satellite.color
+    };
+  }, [passOverlay, satellites]);
   const satelliteViews = useMemo(
     () =>
       satellites.map((satellite) => ({
         ...satellite,
         point: projectLonLat([satellite.longitudeDeg, satellite.latitudeDeg]),
         groundTrackPath: cachedTrackPath(satellite.groundTrack),
-        footprint: footprintSize(satellite)
+        footprint: footprintSize(satellite),
+        showLabel: shouldShowLabel(satellite, layers, viewport.zoom, satellites.length),
+        showFootprint: shouldShowFootprint(satellite, layers, viewport.zoom, satellites.length)
       })),
-    [satellites]
+    [layers, satellites, viewport.zoom]
   );
-  const showSatelliteLabels = satellites.length <= 20;
-  const showSatelliteFootprints = satellites.length <= 30;
+  const labeledCount = satelliteViews.filter((satellite) => satellite.showLabel).length;
+  const declutterHint =
+    layers.labels && satellites.length > 20 && labeledCount < satellites.length
+      ? `Labels ${labeledCount}/${satellites.length} — zoom in or select`
+      : null;
   viewportRef.current = viewport;
 
   function updateViewport(next: MapViewport | ((current: MapViewport) => MapViewport)) {
@@ -278,7 +414,57 @@ export function Map2D({
 
   function resetViewport() {
     updateViewport(DEFAULT_VIEWPORT);
+    followUnlockedByGestureRef.current = false;
   }
+
+  function focusSatellite(
+    satellite: TrackedSatelliteView | undefined,
+    options?: { announce?: boolean; enableFollow?: boolean }
+  ) {
+    if (!satellite) {
+      return;
+    }
+    const point = projectLonLat([satellite.longitudeDeg, satellite.latitudeDeg]);
+    updateViewport((current) =>
+      centerViewportOn(current, point, Math.max(current.zoom, 1.6))
+    );
+    followUnlockedByGestureRef.current = false;
+    if (options?.enableFollow) {
+      onFollowSelectedChange?.(true);
+    }
+    if (options?.announce !== false) {
+      setStatusMessage(`Focused ${satellite.name}`);
+    }
+  }
+
+  function focusSelected(options?: { announce?: boolean; enableFollow?: boolean }) {
+    focusSatellite(selectedSatellite, options);
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => writeStoredViewport(viewport), 250);
+    return () => window.clearTimeout(timer);
+  }, [viewport]);
+
+  useEffect(() => {
+    if (!followSelected || !selectedSatellite || followUnlockedByGestureRef.current) {
+      return;
+    }
+    const point = projectLonLat([selectedSatellite.longitudeDeg, selectedSatellite.latitudeDeg]);
+    updateViewport((current) => centerViewportOn(current, point));
+  }, [
+    followSelected,
+    selectedSatellite?.id,
+    selectedSatellite?.latitudeDeg,
+    selectedSatellite?.longitudeDeg
+  ]);
+
+  useEffect(() => {
+    if (!focusToken) {
+      return;
+    }
+    focusSelected({ announce: true });
+  }, [focusToken]);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -288,13 +474,17 @@ export function Map2D({
 
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
+      followUnlockedByGestureRef.current = true;
+      if (followSelected) {
+        onFollowSelectedChange?.(false);
+      }
       const bounds = svg.getBoundingClientRect();
       const anchor = clientToViewBox(bounds, event.clientX, event.clientY);
       zoomBy(event.deltaY < 0 ? 1.18 : 1 / 1.18, anchor);
     };
     svg.addEventListener("wheel", handleWheel, { passive: false });
     return () => svg.removeEventListener("wheel", handleWheel);
-  }, []);
+  }, [followSelected, onFollowSelectedChange]);
 
   useEffect(() => {
     if (!expanded) {
@@ -371,6 +561,13 @@ export function Map2D({
     };
   }
 
+  function unlockFollowFromGesture() {
+    followUnlockedByGestureRef.current = true;
+    if (followSelected) {
+      onFollowSelectedChange?.(false);
+    }
+  }
+
   function handlePointerDown(event: ReactPointerEvent<SVGSVGElement>) {
     if ((event.target as Element).closest("[data-satellite-marker]")) {
       return;
@@ -378,6 +575,7 @@ export function Map2D({
 
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    unlockFollowFromGesture();
 
     const active = gestureRef.current;
     if (active?.kind === "pan" && active.pointerId !== event.pointerId) {
@@ -405,7 +603,7 @@ export function Map2D({
     ) {
       const bounds = event.currentTarget.getBoundingClientRect();
       const anchor = clientToViewBox(bounds, event.clientX, event.clientY);
-      zoomBy(viewportRef.current.zoom >= MAX_ZOOM - 0.01 ? 1 / MAX_ZOOM : 1.7, anchor);
+      zoomBy(viewportRef.current.zoom >= MAX_ZOOM - 0.01 ? 1 / viewportRef.current.zoom : 1.7, anchor);
       lastTapRef.current = null;
       gestureRef.current = null;
       return;
@@ -504,7 +702,11 @@ export function Map2D({
     gestureRef.current = null;
   }
 
-  const markerScale = 1 / viewport.zoom;
+  function toggleLayer(key: keyof TrackerMapLayers) {
+    onLayersChange?.({ ...layers, [key]: !layers[key] });
+  }
+
+  const markerScale = 1 / Math.max(viewport.zoom, 0.35);
   const legendItems = [
     ...satellites.slice(0, 3).map((satellite) => ({
       id: satellite.id,
@@ -517,12 +719,18 @@ export function Map2D({
     { id: "observer", name: "Observer", color: "#e0a458" }
   ];
 
+  const expandClass = expanded
+    ? immersiveExpand
+      ? " tracker-map-section-expanded tracker-map-section-immersive"
+      : " tracker-map-section-expanded"
+    : "";
+
   const mapSection = (
     <section
-      className={`tracker-map-section relative h-[380px] w-full select-none overflow-hidden rounded-[10px] border border-[var(--line)] bg-[#0b0f14] sm:h-[460px] lg:h-[520px]${
-        expanded ? " tracker-map-section-expanded" : ""
-      }`}
+      className={`tracker-map-section relative h-[380px] w-full select-none overflow-hidden rounded-[10px] border border-[var(--line)] sm:h-[460px] lg:h-[520px]${expandClass}`}
+      style={{ background: EMPTY_MAP_FILL }}
       data-expanded={expanded ? "true" : "false"}
+      data-immersive={expanded && immersiveExpand ? "true" : "false"}
     >
       <svg
         ref={svgRef}
@@ -530,7 +738,7 @@ export function Map2D({
         preserveAspectRatio="xMidYMid slice"
         className="h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
         role="group"
-        aria-label="World map with satellite ground track. Drag to pan, pinch or double-tap to zoom."
+        aria-label="World map with satellite ground track. Drag to pan, pinch or double-tap to zoom. Zoom out past the map edges to see more longitude."
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={endPointer}
@@ -551,7 +759,8 @@ export function Map2D({
           </filter>
         </defs>
 
-        <rect width={WORLD_WIDTH} height={WORLD_HEIGHT} fill="url(#oceanGradient)" />
+        {/* Emptiness behind a zoomed-out map so horizontal overscan is obvious. */}
+        <rect width={WORLD_WIDTH} height={WORLD_HEIGHT} fill={EMPTY_MAP_FILL} />
 
         <g transform={`translate(${viewport.panX} ${viewport.panY}) scale(${viewport.zoom})`}>
           {worldCopies.map((copy) => {
@@ -559,20 +768,24 @@ export function Map2D({
             const interactive = copy === 0;
             return (
               <g key={`world-copy-${copy}`} transform={`translate(${offsetX} 0)`}>
-                <g opacity="0.32" stroke="#334050" strokeWidth={markerScale}>
-                  {Array.from({ length: 11 }, (_, index) => -150 + index * 30).map((longitude) => {
-                    const { x } = projectLonLat([longitude, 0]);
-                    return <line key={`lon-${copy}-${longitude}`} x1={x} x2={x} y1="0" y2={WORLD_HEIGHT} />;
-                  })}
-                  {Array.from({ length: 5 }, (_, index) => -60 + index * 30).map((latitude) => {
-                    const { y } = projectLonLat([0, latitude]);
-                    return <line key={`lat-${copy}-${latitude}`} x1="0" x2={WORLD_WIDTH} y1={y} y2={y} />;
-                  })}
-                </g>
+                <rect width={WORLD_WIDTH} height={WORLD_HEIGHT} fill="url(#oceanGradient)" />
+
+                {layers.grid ? (
+                  <g opacity="0.32" stroke="#334050" strokeWidth={markerScale}>
+                    {Array.from({ length: 11 }, (_, index) => -150 + index * 30).map((longitude) => {
+                      const { x } = projectLonLat([longitude, 0]);
+                      return <line key={`lon-${copy}-${longitude}`} x1={x} x2={x} y1="0" y2={WORLD_HEIGHT} />;
+                    })}
+                    {Array.from({ length: 5 }, (_, index) => -60 + index * 30).map((latitude) => {
+                      const { y } = projectLonLat([0, latitude]);
+                      return <line key={`lat-${copy}-${latitude}`} x1="0" x2={WORLD_WIDTH} y1={y} y2={y} />;
+                    })}
+                  </g>
+                ) : null}
 
                 <image href={WORLD_MAP_ASSET_URL} width={WORLD_WIDTH} height={WORLD_HEIGHT} opacity="0.92" />
 
-                {showSunMoon ? (
+                {layers.sunMoon ? (
                   <g>
                     <path d={nightOverlay.nightPath} fill="#02040a" opacity="0.3" />
                     <path
@@ -603,7 +816,7 @@ export function Map2D({
 
                 <g strokeWidth="1.5">
                   {satelliteViews
-                    .filter((satellite) => showSatelliteFootprints || satellite.selected)
+                    .filter((satellite) => satellite.showFootprint)
                     .map((satellite) => (
                     <ellipse
                       key={`${copy}-${satellite.id}-footprint`}
@@ -619,17 +832,32 @@ export function Map2D({
                   ))}
                 </g>
 
-                <g fill="none" strokeLinecap="round" strokeLinejoin="round">
-                  {satelliteViews.map((satellite) => (
-                    <path
-                      key={`${copy}-${satellite.id}-track`}
-                      d={satellite.groundTrackPath}
-                      stroke={satellite.color}
-                      strokeWidth={(satellite.selected ? 3 : 2) * markerScale}
-                      opacity={satellite.selected ? "0.92" : "0.55"}
-                    />
-                  ))}
-                </g>
+                {layers.tracks ? (
+                  <g fill="none" strokeLinecap="round" strokeLinejoin="round">
+                    {satelliteViews.map((satellite) => (
+                      <path
+                        key={`${copy}-${satellite.id}-track`}
+                        d={satellite.groundTrackPath}
+                        stroke={satellite.color}
+                        strokeWidth={(satellite.selected ? 3 : 2) * markerScale}
+                        opacity={satellite.selected ? "0.92" : "0.55"}
+                      />
+                    ))}
+                  </g>
+                ) : null}
+
+                {passTrackPath ? (
+                  <path
+                    d={passTrackPath.path}
+                    fill="none"
+                    stroke={passTrackPath.color}
+                    strokeWidth={4.5 * markerScale}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeOpacity="0.95"
+                    strokeDasharray={`${8 * markerScale} ${5 * markerScale}`}
+                  />
+                ) : null}
 
                 <g>
                   <g transform={`translate(${observerPoint.x} ${observerPoint.y}) scale(${markerScale})`}>
@@ -656,7 +884,8 @@ export function Map2D({
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
                               event.stopPropagation();
-                              onSatelliteDoubleClick?.(satellite.id);
+                              onSatelliteSelect?.(satellite.id);
+                              setStatusMessage(`Selected ${satellite.name}`);
                             }
                           }
                         : undefined
@@ -665,19 +894,21 @@ export function Map2D({
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
-                      onSatelliteDoubleClick?.(satellite.id);
+                      onSatelliteSelect?.(satellite.id);
+                      setStatusMessage(`Selected ${satellite.name}`);
                     }}
                     onDoubleClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
-                      onSatelliteDoubleClick?.(satellite.id);
+                      onSatelliteSelect?.(satellite.id);
+                      focusSatellite(satellite, { announce: true, enableFollow: true });
                     }}
                   >
                     <circle r={44} fill="transparent" />
                     <title>{`${satellite.name} · ${satellite.latitudeDeg.toFixed(2)}°, ${satellite.longitudeDeg.toFixed(2)}° · alt ${satellite.altitudeKm.toFixed(0)} km\naz ${satellite.azimuthDeg.toFixed(1)} deg, el ${satellite.elevationDeg.toFixed(1)} deg · range ${satellite.rangeKm.toFixed(0)} km`}</title>
                     <circle r={satellite.selected ? "10" : "7"} fill={satellite.color} filter="url(#markerGlow)" />
                     <circle r={satellite.selected ? "16" : "12"} fill="none" stroke={satellite.color} strokeOpacity="0.68" strokeWidth="2.5" />
-                    {showSatelliteLabels || satellite.selected ? (
+                    {satellite.showLabel ? (
                       <>
                         <text x="16" y="-12" fill="#eef2f0" fontSize="16" fontWeight="700">
                           {satellite.name}
@@ -698,6 +929,7 @@ export function Map2D({
       <div className="tracker-map-chrome pointer-events-none absolute inset-0 z-10 p-2.5 sm:p-3">
         <div className="tracker-map-zoom-badge absolute left-2.5 top-2.5 rounded-md border border-[var(--line)] bg-black/45 px-2 py-1 mono text-[0.68rem] text-[var(--muted)] backdrop-blur sm:left-3 sm:top-3">
           {viewport.zoom.toFixed(1)}x
+          {viewport.zoom < 1 ? " · wide" : ""}
         </div>
 
         <button
@@ -706,6 +938,7 @@ export function Map2D({
           aria-expanded={legendOpen}
           onClick={() => {
             setLegendOpen((current) => !current);
+            setLayersOpen(false);
             setGestureHintVisible(false);
           }}
         >
@@ -728,10 +961,38 @@ export function Map2D({
             variant="secondary"
             size="icon-sm"
             aria-label="Zoom out"
-            title="Zoom out"
+            title="Zoom out past map edges for a wider view"
             onClick={() => zoomBy(1 / 1.18)}
           >
             <Minus />
+          </Button>
+          <Button
+            className="tracker-map-control-btn"
+            variant="secondary"
+            size="icon-sm"
+            aria-label="Focus selected satellite"
+            title="Focus selected satellite"
+            onClick={() => focusSelected({ announce: true })}
+          >
+            <Crosshair />
+          </Button>
+          <Button
+            className="tracker-map-control-btn"
+            variant={followSelected ? "default" : "secondary"}
+            size="icon-sm"
+            aria-label={followSelected ? "Stop following satellite" : "Follow selected satellite"}
+            title={followSelected ? "Stop following" : "Follow selected"}
+            aria-pressed={followSelected}
+            onClick={() => {
+              const next = !followSelected;
+              followUnlockedByGestureRef.current = false;
+              onFollowSelectedChange?.(next);
+              if (next) {
+                focusSelected({ announce: true });
+              }
+            }}
+          >
+            <Navigation />
           </Button>
           <Button
             className="tracker-map-control-btn"
@@ -742,6 +1003,20 @@ export function Map2D({
             onClick={resetViewport}
           >
             <RotateCcw />
+          </Button>
+          <Button
+            className="tracker-map-control-btn"
+            variant={layersOpen ? "default" : "secondary"}
+            size="icon-sm"
+            aria-label="Map layers"
+            title="Map layers"
+            aria-pressed={layersOpen}
+            onClick={() => {
+              setLayersOpen((current) => !current);
+              setLegendOpen(false);
+            }}
+          >
+            <Layers />
           </Button>
           <Button
             className="tracker-map-control-btn tracker-map-expand-btn"
@@ -755,6 +1030,29 @@ export function Map2D({
             {expanded ? <Minimize2 /> : <Maximize2 />}
           </Button>
         </div>
+
+        {layersOpen ? (
+          <div className="tracker-map-layers pointer-events-auto absolute right-14 top-2.5 w-[11.5rem] rounded-[10px] border border-[var(--line)] bg-black/55 p-2 text-xs text-[var(--text)] backdrop-blur sm:right-16 sm:top-3">
+            {(
+              [
+                ["tracks", "Ground tracks"],
+                ["footprints", "Footprints"],
+                ["labels", "Labels"],
+                ["grid", "Lat/lon grid"],
+                ["sunMoon", "Sun / Moon / night"]
+              ] as const
+            ).map(([key, label]) => (
+              <label key={key} className="flex cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-white/5">
+                <span>{label}</span>
+                <input
+                  type="checkbox"
+                  checked={layers[key]}
+                  onChange={() => toggleLayer(key)}
+                />
+              </label>
+            ))}
+          </div>
+        ) : null}
 
         <div
           className={`tracker-map-legend absolute bottom-2.5 left-2.5 right-2.5 rounded-[10px] border border-[var(--line)] bg-black/45 text-xs text-[var(--muted)] backdrop-blur sm:bottom-3 sm:left-3 sm:right-auto ${
@@ -771,15 +1069,29 @@ export function Map2D({
               </span>
             ))}
           </div>
+          {declutterHint ? (
+            <p className="border-t border-[var(--line)] px-3 py-1.5 mono text-[0.65rem] text-[var(--faint)]">
+              {declutterHint}
+            </p>
+          ) : null}
+          {passOverlay ? (
+            <p className="border-t border-[var(--line)] px-3 py-1.5 text-[0.7rem] text-[var(--accent)]">
+              Pass path AOS→LOS highlighted
+            </p>
+          ) : null}
         </div>
 
         {gestureHintVisible ? (
           <div className="tracker-map-gesture-hint absolute inset-x-0 bottom-3 flex justify-center px-4">
             <p className="rounded-full border border-[var(--line)] bg-black/55 px-3 py-1.5 text-center text-[0.72rem] text-[var(--text)] backdrop-blur">
-              Drag to pan · Pinch or double-tap to zoom
+              Drag to pan · Pinch to zoom · Zoom out for a wider view
             </p>
           </div>
         ) : null}
+      </div>
+
+      <div className="sr-only" role="status" aria-live="polite">
+        {statusMessage}
       </div>
     </section>
   );

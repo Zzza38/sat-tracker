@@ -175,7 +175,7 @@ export function RadarScope({
         ))}
         {satellites.length > 4 ? (
           <p className="mono px-2 py-1 text-xs text-[var(--muted)]">
-            +{satellites.length - 4} more on scope — hover a target or click to inspect
+            +{satellites.length - 4} more on scope — tap or click a target to inspect
           </p>
         ) : null}
       </div>
