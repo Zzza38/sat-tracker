@@ -14,6 +14,7 @@ Test it out [here](https://sat-tracker.ziona.dev)!
 - Pass prediction with AOS, LOS, TCA, azimuth arcs, sky plot, and elevation chart
 - 2D map tracker with optional lazy-loaded 3D Cesium globe
 - IndexedDB persistence for satellites, observer sites, watchlists, and settings
+- Offline mode: installable web app with cached assets, self-hosted fonts, and a bundled starter catalog
 - CSV and ICS export, plus native save dialogs in Electron
 
 ## Scripts
@@ -101,3 +102,4 @@ Packaged desktop builds output platform artifacts to `release/`.
 - CelesTrak GP data is fetched directly from `celestrak.org`.
 - OMM JSON is stored internally so the app can handle larger catalog numbers as TLE-only sources age out.
 - SGP4 accuracy depends on TLE freshness; configure the automatic refresh interval in Settings.
+- After the first online visit, the web build registers a service worker so the app shell, fonts, map assets, and previously synced catalog data keep working offline. A first offline launch uses a bundled starter catalog (ISS, HST, weather birds, and more); paste TLEs anytime without a network.

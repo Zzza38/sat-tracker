@@ -1,7 +1,9 @@
 import { lazy, Suspense } from "react";
 import { Analytics } from "@vercel/analytics/react";
 import { Layout } from "./components/Layout";
+import { OfflineBanner } from "./components/OfflineBanner";
 import { useApp } from "./context/AppContext";
+import { useOnlineStatus } from "./hooks/useOnlineStatus";
 
 const CatalogPage = lazy(() => import("./pages/CatalogPage").then((module) => ({ default: module.CatalogPage })));
 const ArPage = lazy(() => import("./pages/ArPage").then((module) => ({ default: module.ArPage })));
@@ -12,6 +14,7 @@ const TrackerPage = lazy(() => import("./pages/TrackerPage").then((module) => ({
 
 export default function App() {
   const { page, error, clearError, bootstrapping, refreshCatalog } = useApp();
+  const online = useOnlineStatus();
 
   const content = {
     catalog: <CatalogPage />,
@@ -24,13 +27,16 @@ export default function App() {
 
   return (
     <Layout>
+      <OfflineBanner />
       {error ? (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-[10px] border border-[var(--line-strong)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--danger)]">
           <p role="alert">{error}</p>
           <div className="flex shrink-0 items-center gap-1">
-            <button type="button" className="ghost" onClick={() => { void refreshCatalog(); }}>
-              Retry
-            </button>
+            {online ? (
+              <button type="button" className="ghost" onClick={() => { void refreshCatalog(); }}>
+                Retry
+              </button>
+            ) : null}
             <button type="button" className="ghost" onClick={clearError} aria-label="Dismiss error">
               Dismiss
             </button>
@@ -42,7 +48,9 @@ export default function App() {
           <p className="label">Catalog</p>
           <h1 className="mt-2 text-2xl font-semibold text-[var(--text)]">Loading satellite data</h1>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Downloading the latest orbit data for your feeds and preparing the catalog.
+            {online
+              ? "Downloading the latest orbit data for your feeds and preparing the catalog."
+              : "Preparing offline catalog and cached satellite data."}
           </p>
         </div>
       ) : (

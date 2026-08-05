@@ -9,6 +9,7 @@ import {
   refreshSatellite,
   toggleWatchlistSatellite
 } from "@/shared/catalog/service";
+import { isBrowserOnline, seedOfflineCatalog } from "@/shared/catalog/offline-seed";
 import { db, ensureSeedData, getActiveObserver, getSettings, saveSettings } from "@/shared/db";
 import { DEFAULT_OBSERVER } from "@/shared/observer/defaults";
 import { DEFAULT_TLE_SOURCES, refreshIntervalToHours } from "@/shared/tle/sources";
@@ -239,14 +240,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     try {
       await ensureSeedData();
-      const records = await listSatellites();
+      let records = await listSatellites();
       const appSettings = await getSettings();
+      const online = isBrowserOnline();
       let shouldRefreshInBackground = false;
+      let usedOfflineSeed = false;
 
-      if (records.length === 0 && !appSettings.initialSourcesFetched) {
-        shouldRefreshInBackground = true;
+      if (records.length === 0 && !online) {
+        const seeded = await seedOfflineCatalog();
+        if (seeded > 0) {
+          usedOfflineSeed = true;
+          records = await listSatellites();
+          await saveSettings({ demoSeeded: true });
+        }
+      } else if (records.length === 0 && !appSettings.initialSourcesFetched) {
+        shouldRefreshInBackground = online;
       } else if (catalogNeedsRefresh(records, appSettings)) {
-        shouldRefreshInBackground = true;
+        shouldRefreshInBackground = online;
       }
 
       const [activeObserver, nextSettings, watchlist, observerRecords] = await Promise.all([
@@ -278,6 +288,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return next;
       });
 
+      if (usedOfflineSeed) {
+        setError(
+          "You're offline, so the bundled starter catalog was loaded. Reconnect to sync the latest CelesTrak feeds."
+        );
+      }
+
       if (shouldRefreshInBackground && !autoRefreshPromise) {
         setCatalogSyncing(true);
         const updateCatalogFromCache = async () => {
@@ -305,9 +321,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         autoRefreshPromise = sourceImportPromise
           .then(updateCatalogFromCache)
-          .catch((caught) => {
+          .catch(async (caught) => {
             const message = caught instanceof Error ? caught.message : "Failed to load catalog.";
-            setError(records.length === 0 ? message : `Background refresh failed: ${message} Showing cached data.`);
+            if (records.length === 0) {
+              const seeded = await seedOfflineCatalog();
+              if (seeded > 0) {
+                await saveSettings({ demoSeeded: true });
+                await updateCatalogFromCache();
+                setError(
+                  `Couldn't reach CelesTrak (${message}). Loaded the offline starter catalog instead.`
+                );
+                return;
+              }
+              setError(message);
+              return;
+            }
+            setError(`Background refresh failed: ${message} Showing cached data.`);
           })
           .finally(() => {
             autoRefreshPromise = null;

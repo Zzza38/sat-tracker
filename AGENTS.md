@@ -18,6 +18,10 @@ backend, database, or secrets to configure. Standard commands live in `package.j
 - Quality gates: `pnpm run lint`, `pnpm run typecheck`, `pnpm run test` (Vitest + jsdom),
   and `pnpm run build:web` all pass out of the box.
 - Live catalog data is fetched anonymously from `celestrak.org` (needs outbound
-  network). Without network, only manual TLE/OMM paste works and the app still loads.
+  network). Offline, the app uses IndexedDB-cached TLEs or a bundled starter
+  catalog; manual TLE/OMM paste always works. The web build is a PWA
+  (`vite-plugin-pwa`) that caches the app shell after the first visit.
 - Persistence is client-side IndexedDB (via Dexie), so tracked satellites/settings
   persist in the browser profile between runs.
+- Brand/favicon assets live in `public/` (`sat-tracker-icon.svg`, `favicon.ico`,
+  `apple-touch-icon.png`). Keep those in sync when changing the logo.
