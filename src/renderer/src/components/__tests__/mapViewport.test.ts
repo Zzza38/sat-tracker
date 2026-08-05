@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import { WORLD_HEIGHT, WORLD_WIDTH } from "../worldMap";
 import {
   MAX_ZOOM,
+  MIN_ZOOM,
+  centerViewportOn,
   clientDeltaToViewBox,
   clientToViewBox,
+  clampPanY,
   getSvgProjection,
   panViewport,
   pointerDistance,
@@ -48,10 +51,34 @@ describe("mapViewport", () => {
     expect(clamped.zoom).toBe(MAX_ZOOM);
   });
 
+  it("allows zooming out below 1× for horizontal overscan", () => {
+    const zoomedOut = zoomViewport({ panX: 0, panY: 0, zoom: 1 }, 0.5, {
+      x: WORLD_WIDTH / 2,
+      y: WORLD_HEIGHT / 2
+    });
+    expect(zoomedOut.zoom).toBe(0.5);
+    expect(zoomedOut.panY).toBeCloseTo((WORLD_HEIGHT - WORLD_HEIGHT * 0.5) / 2, 5);
+
+    const clamped = zoomViewport(zoomedOut, 0.01, { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 });
+    expect(clamped.zoom).toBe(MIN_ZOOM);
+  });
+
+  it("letterboxes vertically when zoomed out past the map edges", () => {
+    expect(clampPanY(0, 0.5)).toBeCloseTo((WORLD_HEIGHT - WORLD_HEIGHT * 0.5) / 2, 5);
+    expect(clampPanY(999, 0.4)).toBeCloseTo((WORLD_HEIGHT - WORLD_HEIGHT * 0.4) / 2, 5);
+  });
+
   it("pans and clamps vertical travel at the current zoom", () => {
     const panned = panViewport({ panX: 10, panY: 0, zoom: 2 }, 5, -1000);
     expect(panned.panX).toBe(15);
     expect(panned.panY).toBe(WORLD_HEIGHT - WORLD_HEIGHT * 2);
+  });
+
+  it("centers on a projected point", () => {
+    const centered = centerViewportOn({ panX: 0, panY: 0, zoom: 1 }, { x: 360, y: 180 }, 2);
+    expect(centered.zoom).toBe(2);
+    expect(centered.panX).toBeCloseTo(WORLD_WIDTH / 2 - 360 * 2, 5);
+    expect(centered.panY).toBeCloseTo(clampPanY(WORLD_HEIGHT / 2 - 180 * 2, 2), 5);
   });
 
   it("computes pinch distance and midpoint", () => {

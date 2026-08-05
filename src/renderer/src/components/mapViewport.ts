@@ -1,6 +1,7 @@
 import { WORLD_HEIGHT, WORLD_WIDTH } from "./worldMap";
 
-export const MIN_ZOOM = 1;
+/** Allow zooming out below 1× so the map letterboxes and more longitude is visible. */
+export const MIN_ZOOM = 0.4;
 export const MAX_ZOOM = 6;
 
 export interface MapViewport {
@@ -26,7 +27,17 @@ export function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * Vertical pan limits.
+ * - zoom >= 1: keep the map covering the viewBox vertically (no empty bands).
+ * - zoom < 1: center the smaller map and allow only the letterbox position so
+ *   emptiness fills above/below while more longitude stays in view.
+ */
 export function clampPanY(value: number, zoom: number) {
+  if (zoom < 1) {
+    return (WORLD_HEIGHT - WORLD_HEIGHT * zoom) / 2;
+  }
+
   if (zoom <= 1) {
     return 0;
   }
@@ -34,7 +45,7 @@ export function clampPanY(value: number, zoom: number) {
   return clamp(value, WORLD_HEIGHT - WORLD_HEIGHT * zoom, 0);
 }
 
-/** Cover/slice projection so the map fills the element without letterboxing. */
+/** Cover/slice projection so the map fills the element without letterboxing at 1×. */
 export function getSvgProjection(bounds: { width: number; height: number }): SvgProjection {
   const width = Math.max(bounds.width, 1);
   const height = Math.max(bounds.height, 1);
@@ -98,6 +109,20 @@ export function panViewport(current: MapViewport, deltaX: number, deltaY: number
     ...current,
     panX: current.panX + deltaX,
     panY: clampPanY(current.panY + deltaY, current.zoom)
+  };
+}
+
+/** Center the viewport on a lon/lat point at the given (or current) zoom. */
+export function centerViewportOn(
+  current: MapViewport,
+  point: Point,
+  zoom = current.zoom
+): MapViewport {
+  const nextZoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
+  return {
+    zoom: nextZoom,
+    panX: WORLD_WIDTH / 2 - point.x * nextZoom,
+    panY: clampPanY(WORLD_HEIGHT / 2 - point.y * nextZoom, nextZoom)
   };
 }
 

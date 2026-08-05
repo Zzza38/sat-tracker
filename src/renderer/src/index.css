@@ -1587,6 +1587,23 @@ tbody tr:hover td {
     inset: 0 0 calc(4.4rem + env(safe-area-inset-bottom)) 0;
   }
 
+  .tracker-map-section-expanded.tracker-map-section-immersive {
+    inset: 0;
+  }
+
+  .tracker-controls-desktop {
+    display: none;
+  }
+
+  .tracker-controls-sheet {
+    display: block;
+  }
+
+  .tracker-map-anchor .tracker-map-section {
+    height: min(68dvh, 560px);
+    min-height: 340px;
+  }
+
   .panel,
   .panel-strong {
     border-radius: 10px;
@@ -1686,10 +1703,101 @@ tbody tr:hover td {
   }
 
   .tracker-map-section {
-    height: min(58dvh, 460px);
-    min-height: 320px;
+    height: min(68dvh, 560px);
+    min-height: 340px;
     border-radius: 9px;
   }
+}
+
+.tracker-controls-sheet {
+  display: none;
+}
+
+.tracker-controls-sheet-handle {
+  display: none;
+}
+
+.tracker-controls-sheet-body {
+  display: contents;
+}
+
+@media (max-width: 767px) and (max-aspect-ratio: 4 / 3) {
+  .tracker-controls-sheet {
+    display: block;
+    position: sticky;
+    bottom: calc(4.4rem + env(safe-area-inset-bottom));
+    z-index: 30;
+    margin-top: 0.25rem;
+    border: 1px solid var(--line);
+    border-radius: 14px 14px 10px 10px;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(14px);
+    box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.28);
+  }
+
+  .tracker-controls-sheet-handle {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.7rem 0.9rem;
+    color: var(--text);
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: transparent;
+    border: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .tracker-controls-sheet-grab {
+    position: absolute;
+    left: 50%;
+    top: 0.35rem;
+    width: 2.4rem;
+    height: 0.28rem;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background: var(--line-strong);
+  }
+
+  .tracker-controls-sheet-handle {
+    position: relative;
+    padding-top: 0.95rem;
+  }
+
+  .tracker-controls-immersive-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.68rem;
+    font-weight: 500;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .tracker-controls-sheet-body {
+    display: none;
+    max-height: min(48dvh, 420px);
+    overflow: auto;
+    padding: 0 0.85rem 0.85rem;
+  }
+
+  .tracker-controls-sheet-open .tracker-controls-sheet-body {
+    display: block;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Keyboard focus ring for Map2D satellite markers (SVG <g> with tabindex). */
@@ -1704,10 +1812,13 @@ tbody tr:hover td {
 }
 
 /* Map chrome defaults (desktop-first); mobile overrides follow. */
-.tracker-map-expand-btn,
 .tracker-map-legend-toggle,
 .tracker-map-gesture-hint {
   display: none;
+}
+
+.tracker-map-expand-btn {
+  display: inline-flex;
 }
 
 button.tracker-map-legend-toggle:not([data-slot]) {
@@ -1742,6 +1853,15 @@ button.tracker-map-legend-toggle:not([data-slot]):hover {
   border-left: 0;
   border-right: 0;
   border-bottom: 0;
+}
+
+.tracker-map-section-expanded.tracker-map-section-immersive {
+  inset: 0;
+  z-index: 11000;
+}
+
+.tracker-map-layers input[type="checkbox"] {
+  accent-color: var(--accent);
 }
 
 @media (max-width: 640px) {
@@ -1794,9 +1914,16 @@ button.tracker-map-legend-toggle:not([data-slot]):hover {
     bottom: 0.85rem;
   }
 
+  .tracker-map-layers {
+    right: 4.2rem;
+    left: 0.7rem;
+    width: auto;
+    max-width: none;
+  }
+
   .tracker-map-section-placeholder {
-    height: min(58dvh, 460px);
-    min-height: 320px;
+    height: min(68dvh, 560px);
+    min-height: 340px;
     border-color: transparent;
     background: transparent;
   }

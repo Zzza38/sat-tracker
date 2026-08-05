@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { clsx } from "clsx";
-import { Clock3, Pause, Play, RotateCcw, SunMoon } from "lucide-react";
-import { buildGroundTrack, computeOrbitSnapshot } from "@/shared/propagation/engine";
+import { ChevronUp, Clock3, Pause, Play, RotateCcw, SunMoon } from "lucide-react";
+import { computeOrbitSnapshot } from "@/shared/propagation/engine";
+import {
+  buildGroundTracksAsync,
+  cancelGroundTrackBuild
+} from "@/shared/propagation/ground-track-worker";
 import type { GroundTrackPoint, PassPrediction } from "@/shared/types";
 import { predictPassesBulkStreaming } from "@/shared/passes/predictor";
 import { formatDuration, formatTimestamp, formatTimestampCompact } from "@/shared/utils/date";
@@ -10,6 +14,13 @@ import { useTicker } from "../hooks/useTicker";
 import { Globe3D } from "../components/Globe3D";
 import { Map2D, type TrackedSatelliteView } from "../components/Map2D";
 import { RadarScope } from "../components/RadarScope";
+import {
+  readStoredFollow,
+  readStoredMapLayers,
+  writeStoredFollow,
+  writeStoredMapLayers,
+  type TrackerMapLayers
+} from "../components/trackerMapTypes";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Slider } from "../components/ui/slider";
@@ -113,6 +124,8 @@ function readTrackerState() {
   }
 }
 
+const TRACK_POINTS = TRACK_WINDOW_MINUTES + 1;
+
 export function TrackerPage() {
   const storedTrackerState = useMemo(readTrackerState, []);
   const initialAnchor = Date.now();
@@ -161,16 +174,27 @@ export function TrackerPage() {
   const timelineAnchorRef = useRef(initialAnchor);
   const timelineDragRef = useRef<TimelineDragState | null>(null);
   const dataPanelRef = useRef<HTMLElement | null>(null);
+  const mapSectionRef = useRef<HTMLDivElement | null>(null);
   const [timelineOffsetMin, setTimelineOffsetMin] = useState(initialOffset);
   const [timelineRange, setTimelineRange] = useState(rangeForTimelineOffset(initialOffset));
   const [timelineLive, setTimelineLive] = useState(storedTrackerState.live ?? true);
   const [timelinePlaying, setTimelinePlaying] = useState(storedTrackerState.playing ?? false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(storedTrackerState.playbackSpeed ?? 1);
-  const [showSunMoon, setShowSunMoon] = useState(storedTrackerState.showSunMoon ?? true);
+  const [mapLayers, setMapLayers] = useState<TrackerMapLayers>(() => {
+    const stored = readStoredMapLayers();
+    if (storedTrackerState.showSunMoon !== undefined) {
+      return { ...stored, sunMoon: storedTrackerState.showSunMoon };
+    }
+    return stored;
+  });
+  const [followSelected, setFollowSelected] = useState(() => readStoredFollow());
+  const [focusToken, setFocusToken] = useState(0);
+  const [controlsSheetOpen, setControlsSheetOpen] = useState(false);
+  const [immersiveExpand, setImmersiveExpand] = useState(false);
   const [trackedListExpanded, setTrackedListExpanded] = useState(false);
-  const [globeMounted, setGlobeMounted] = useState(trackerViewMode === "3d");
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
   const [refreshIsError, setRefreshIsError] = useState(false);
+  const showSunMoon = mapLayers.sunMoon;
   const liveNow = useTicker(trackerLiveIntervalMs(visibleSatellites.length), timelineLive);
   const playbackNow = useTicker(
     visibleSatellites.length > LARGE_TRACKED_COUNT ? 250 : 100,
@@ -200,6 +224,14 @@ export function TrackerPage() {
   };
 
   useEffect(() => {
+    writeStoredMapLayers(mapLayers);
+  }, [mapLayers]);
+
+  useEffect(() => {
+    writeStoredFollow(followSelected);
+  }, [followSelected]);
+
+  useEffect(() => {
     return () => {
       try {
         localStorage.setItem(TRACKER_STATE_KEY, JSON.stringify(persistedStateRef.current));
@@ -226,36 +258,26 @@ export function TrackerPage() {
     }
 
     let cancelled = false;
-    let index = 0;
-    // Spread the rebuild over ~4 frames so no single frame blocks >~30ms.
-    const chunkSize = Math.max(1, Math.ceil(visibleSatellites.length / 4));
-    const buildChunk = () => {
-      if (cancelled) {
-        return;
-      }
+    const { id, promise } = buildGroundTracksAsync(
+      visibleSatellites,
+      trackStart,
+      TRACK_POINTS,
+      trackStepSeconds
+    );
 
-      const additions = new Map<string, GroundTrackPoint[]>();
-      for (const satellite of visibleSatellites.slice(index, index + chunkSize)) {
-        try {
-          additions.set(
-            satellite.id,
-            buildGroundTrack(satellite, trackStart, TRACK_WINDOW_MINUTES + 1, trackStepSeconds)
-          );
-        } catch {
-          additions.set(satellite.id, []);
+    void promise
+      .then((tracks) => {
+        if (!cancelled) {
+          setGroundTracksById(tracks);
         }
-      }
-
-      setGroundTracksById((previous) => new Map([...previous, ...additions]));
-      index += chunkSize;
-      if (index < visibleSatellites.length) {
-        requestAnimationFrame(buildChunk);
-      }
-    };
-    buildChunk();
+      })
+      .catch(() => {
+        // Cancelled or worker failure — keep the previous tracks.
+      });
 
     return () => {
       cancelled = true;
+      cancelGroundTrackBuild(id);
     };
   }, [trackStart, trackStepSeconds, visibleSatellites, tracksPaused]);
 
@@ -527,9 +549,27 @@ export function TrackerPage() {
     }
   }
 
-  function inspectSatellite(id: string) {
+  function inspectSatellite(id: string, options?: { focusMap?: boolean }) {
     selectSatellite(id);
+    if (options?.focusMap) {
+      mapSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      setFocusToken((token) => token + 1);
+      setControlsSheetOpen(false);
+    }
   }
+
+  function updateMapLayers(next: TrackerMapLayers) {
+    setMapLayers(next);
+  }
+
+  const passOverlay =
+    trackerPreviewRequest && selectedPass
+      ? {
+          satelliteId: selectedPass.satelliteId,
+          aos: selectedPass.aos,
+          los: selectedPass.los
+        }
+      : null;
 
   if (!focusSatellite || !selectedSnapshot || trackedSatellites.length === 0) {
     const propagationFailed = Boolean(focusSatellite) && (!selectedSnapshot || trackedSatellites.length === 0);
@@ -590,6 +630,170 @@ export function TrackerPage() {
   const timelineFillStartPercent = Math.min(timelineCenterPercent, timelineThumbPercent);
   const timelineFillWidthPercent = Math.abs(timelineThumbPercent - timelineCenterPercent);
 
+  const satelliteList = (
+    <div className="tracker-satellite-list flex flex-wrap gap-2">
+      {displayedTrackedSatellites.map((satellite) => {
+        const selected = satellite.id === focusSatellite.id;
+        return (
+          <div
+            key={satellite.id}
+            className={clsx(
+              "tracker-satellite-pill flex items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]",
+              selected && "selected"
+            )}
+          >
+            <input
+              className="satellite-color-picker"
+              type="color"
+              value={satellite.color}
+              title="Change satellite color"
+              aria-label={`Change ${satellite.name} color`}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => void setSatelliteColor(satellite.id, event.target.value)}
+            />
+            <button
+              type="button"
+              className="link-button cursor-pointer"
+              aria-pressed={selected}
+              title="Inspect and focus this satellite on the map"
+              onClick={() => inspectSatellite(satellite.id, { focusMap: true })}
+            >
+              {satellite.name}
+            </button>
+            <span className="mono text-xs text-[var(--faint)]">{satellite.noradId}</span>
+            {watchlistIds.includes(satellite.id) ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void untrackSatellite(satellite.id);
+                }}
+              >
+                Untrack
+              </Button>
+            ) : (
+              <span className="text-xs text-[var(--faint)]">selected</span>
+            )}
+          </div>
+        );
+      })}
+      {trackedSatellites.length > COLLAPSED_TRACKED_LIST_COUNT ? (
+        <Button
+          className="tracker-satellite-more"
+          variant="secondary"
+          size="sm"
+          onClick={() => setTrackedListExpanded((current) => !current)}
+        >
+          {trackedListExpanded ? "Show less" : `Show ${hiddenTrackedSatelliteCount} more`}
+        </Button>
+      ) : null}
+    </div>
+  );
+
+  const timelineCard = (
+    <Card className="tracker-timeline rounded-[var(--radius-lg)] border-[var(--line)] bg-[var(--surface)] py-0 shadow-none">
+      <CardContent className="p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+              <Clock3 size={15} className="text-[var(--muted)]" />
+              <span>Timeline</span>
+              {timelineLive ? (
+                <span className="rounded-full border border-[rgba(101,189,142,0.25)] bg-[rgba(101,189,142,0.12)] px-2 py-0.5 text-[11px] font-semibold text-[var(--success)]">
+                  Live
+                </span>
+              ) : timelinePlaying ? (
+                <span className="rounded-full border border-[rgba(108,140,255,0.25)] bg-[rgba(108,140,255,0.12)] px-2 py-0.5 text-[11px] font-semibold text-[var(--accent)]">
+                  {playbackSpeed}x
+                </span>
+              ) : null}
+            </div>
+            <div className="mono mt-1 text-xs text-[var(--muted)]">{formatTimestamp(currentTime)}</div>
+          </div>
+
+          <div className="tracker-timeline-actions flex flex-wrap items-center justify-end gap-2">
+            <Button
+              variant={showSunMoon ? "default" : "secondary"}
+              size="sm"
+              className="h-8"
+              aria-pressed={showSunMoon}
+              onClick={() => updateMapLayers({ ...mapLayers, sunMoon: !mapLayers.sunMoon })}
+            >
+              <SunMoon size={14} />
+              Sun/Moon
+            </Button>
+            <div className="tracker-speed-control grid w-[220px] grid-cols-[42px_1fr_48px] items-center gap-2 rounded-md border border-[var(--line-strong)] bg-[var(--surface-2)] px-3 py-2">
+              <span className="text-xs font-medium text-[var(--muted)]">Speed</span>
+              <Slider
+                min={0.25}
+                max={120}
+                step={0.25}
+                value={[playbackSpeed]}
+                aria-label="Playback speed"
+                onValueChange={([value]) => changePlaybackSpeed(value ?? 1)}
+              />
+              <span className="mono text-right text-xs text-[var(--text)]">{playbackSpeed.toFixed(playbackSpeed < 10 ? 2 : 0)}x</span>
+            </div>
+            <Button variant="secondary" size="sm" className="h-8" onClick={togglePlayback}>
+              {timelineLive || timelinePlaying ? <Pause size={14} /> : <Play size={14} />}
+              {timelineLive || timelinePlaying ? "Pause" : "Play"}
+            </Button>
+            <Button
+              variant={timelineLive ? "default" : "secondary"}
+              size="sm"
+              className="h-8"
+              aria-pressed={timelineLive}
+              onClick={goLive}
+            >
+              <RotateCcw size={14} />
+              Live
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-[56px_1fr_56px] items-center gap-3">
+          <span className="mono text-xs text-[var(--faint)]">{formatTimelineOffset(timelineRange.min)}</span>
+          <div
+            className="timeline-infinite-scrubber"
+            role="slider"
+            tabIndex={0}
+            aria-label="Timeline offset"
+            aria-valuemin={timelineRange.min}
+            aria-valuemax={timelineRange.max}
+            aria-valuenow={visibleTimelineOffsetMin}
+            aria-valuetext={formatTimelineOffset(visibleTimelineOffsetMin)}
+            onPointerDown={handleTimelinePointerDown}
+            onPointerMove={handleTimelinePointerMove}
+            onPointerUp={handleTimelinePointerEnd}
+            onPointerCancel={handleTimelinePointerEnd}
+            onKeyDown={handleTimelineKeyDown}
+          >
+            <div className="timeline-infinite-track">
+              <div
+                className="timeline-infinite-fill"
+                style={{
+                  left: `${timelineFillStartPercent}%`,
+                  width: `${timelineFillWidthPercent}%`
+                }}
+              />
+              <div
+                className="timeline-infinite-thumb"
+                style={{ left: `${timelineThumbPercent}%` }}
+              />
+            </div>
+            <div
+              className="pointer-events-none absolute top-1/2 z-10 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[var(--bg)] bg-[var(--success)] shadow-[0_0_0_2px_rgba(101,189,142,0.22)]"
+              style={{ left: `${timelineCenterPercent}%` }}
+              aria-hidden="true"
+            />
+          </div>
+          <span className="mono text-right text-xs text-[var(--faint)]">{formatTimelineOffset(timelineRange.max)}</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   return (
     <div className="tracker-page space-y-5">
       <div className="tracker-header flex flex-wrap items-end justify-between gap-4">
@@ -612,75 +816,15 @@ export function TrackerPage() {
           <Button
             variant={trackerViewMode === "3d" ? "default" : "secondary"}
             aria-pressed={trackerViewMode === "3d"}
-            onClick={() => {
-              setGlobeMounted(true);
-              setTrackerViewMode("3d");
-            }}
+            onClick={() => setTrackerViewMode("3d")}
           >
             3D Globe
           </Button>
         </div>
       </div>
 
-      <div className="tracker-satellite-list flex flex-wrap gap-2">
-        {displayedTrackedSatellites.map((satellite) => {
-          const selected = satellite.id === focusSatellite.id;
-          return (
-          <div
-            key={satellite.id}
-            className={clsx(
-              "tracker-satellite-pill flex items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]",
-              selected && "selected"
-            )}
-          >
-            <input
-              className="satellite-color-picker"
-              type="color"
-              value={satellite.color}
-              title="Change satellite color"
-              aria-label={`Change ${satellite.name} color`}
-              onClick={(event) => event.stopPropagation()}
-              onChange={(event) => void setSatelliteColor(satellite.id, event.target.value)}
-            />
-            {/* The pill also holds a colour picker and Untrack, so the name button
-                is the selectable control rather than the pill itself. */}
-            <button
-              type="button"
-              className="link-button cursor-pointer"
-              aria-pressed={selected}
-              title="Inspect this satellite"
-              onClick={() => inspectSatellite(satellite.id)}
-            >
-              {satellite.name}
-            </button>
-            <span className="mono text-xs text-[var(--faint)]">{satellite.noradId}</span>
-            {watchlistIds.includes(satellite.id) ? (
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void untrackSatellite(satellite.id);
-                }}
-              >
-                Untrack
-              </Button>
-            ) : (
-              <span className="text-xs text-[var(--faint)]">selected</span>
-            )}
-          </div>
-          );
-        })}
-        {trackedSatellites.length > COLLAPSED_TRACKED_LIST_COUNT ? (
-          <Button
-            className="tracker-satellite-more"
-            variant="secondary"
-            size="sm"
-            onClick={() => setTrackedListExpanded((current) => !current)}
-          >
-            {trackedListExpanded ? "Show less" : `Show ${hiddenTrackedSatelliteCount} more`}
-          </Button>
-        ) : null}
+      <div className="tracker-controls-desktop space-y-5">
+        {satelliteList}
       </div>
 
       {trackerPreviewRequest ? (
@@ -720,128 +864,78 @@ export function TrackerPage() {
         </div>
       ) : null}
 
-      <Card className="tracker-timeline rounded-[var(--radius-lg)] border-[var(--line)] bg-[var(--surface)] py-0 shadow-none">
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
-                <Clock3 size={15} className="text-[var(--muted)]" />
-                <span>Timeline</span>
-                {timelineLive ? (
-                  <span className="rounded-full border border-[rgba(101,189,142,0.25)] bg-[rgba(101,189,142,0.12)] px-2 py-0.5 text-[11px] font-semibold text-[var(--success)]">
-                    Live
-                  </span>
-                ) : timelinePlaying ? (
-                  <span className="rounded-full border border-[rgba(108,140,255,0.25)] bg-[rgba(108,140,255,0.12)] px-2 py-0.5 text-[11px] font-semibold text-[var(--accent)]">
-                    {playbackSpeed}x
-                  </span>
-                ) : null}
-              </div>
-              <div className="mono mt-1 text-xs text-[var(--muted)]">{formatTimestamp(currentTime)}</div>
-            </div>
+      <div className="tracker-controls-desktop">{timelineCard}</div>
 
-            <div className="tracker-timeline-actions flex flex-wrap items-center justify-end gap-2">
-              <Button
-                variant={showSunMoon ? "default" : "secondary"}
-                size="sm"
-                className="h-8"
-                aria-pressed={showSunMoon}
-                onClick={() => setShowSunMoon((current) => !current)}
-              >
-                <SunMoon size={14} />
-                Sun/Moon
-              </Button>
-              <div className="tracker-speed-control grid w-[220px] grid-cols-[42px_1fr_48px] items-center gap-2 rounded-md border border-[var(--line-strong)] bg-[var(--surface-2)] px-3 py-2">
-                <span className="text-xs font-medium text-[var(--muted)]">Speed</span>
-                <Slider
-                  min={0.25}
-                  max={120}
-                  step={0.25}
-                  value={[playbackSpeed]}
-                  aria-label="Playback speed"
-                  onValueChange={([value]) => changePlaybackSpeed(value ?? 1)}
-                />
-                <span className="mono text-right text-xs text-[var(--text)]">{playbackSpeed.toFixed(playbackSpeed < 10 ? 2 : 0)}x</span>
-              </div>
-              <Button variant="secondary" size="sm" className="h-8" onClick={togglePlayback}>
-                {timelineLive || timelinePlaying ? <Pause size={14} /> : <Play size={14} />}
-                {timelineLive || timelinePlaying ? "Pause" : "Play"}
-              </Button>
-              <Button
-                variant={timelineLive ? "default" : "secondary"}
-                size="sm"
-                className="h-8"
-                aria-pressed={timelineLive}
-                onClick={goLive}
-              >
-                <RotateCcw size={14} />
-                Live
-              </Button>
-            </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-[56px_1fr_56px] items-center gap-3">
-            <span className="mono text-xs text-[var(--faint)]">{formatTimelineOffset(timelineRange.min)}</span>
-            <div
-              className="timeline-infinite-scrubber"
-              role="slider"
-              tabIndex={0}
-              aria-label="Timeline offset"
-              aria-valuemin={timelineRange.min}
-              aria-valuemax={timelineRange.max}
-              aria-valuenow={visibleTimelineOffsetMin}
-              aria-valuetext={formatTimelineOffset(visibleTimelineOffsetMin)}
-              onPointerDown={handleTimelinePointerDown}
-              onPointerMove={handleTimelinePointerMove}
-              onPointerUp={handleTimelinePointerEnd}
-              onPointerCancel={handleTimelinePointerEnd}
-              onKeyDown={handleTimelineKeyDown}
-            >
-              <div className="timeline-infinite-track">
-                <div
-                  className="timeline-infinite-fill"
-                  style={{
-                    left: `${timelineFillStartPercent}%`,
-                    width: `${timelineFillWidthPercent}%`
-                  }}
-                />
-                <div
-                  className="timeline-infinite-thumb"
-                  style={{ left: `${timelineThumbPercent}%` }}
-                />
-              </div>
-              <div
-                className="pointer-events-none absolute top-1/2 z-10 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[var(--bg)] bg-[var(--success)] shadow-[0_0_0_2px_rgba(101,189,142,0.22)]"
-                style={{ left: `${timelineCenterPercent}%` }}
-                aria-hidden="true"
-              />
-            </div>
-            <span className="mono text-right text-xs text-[var(--faint)]">{formatTimelineOffset(timelineRange.max)}</span>
-          </div>
-        </CardContent>
-      </Card>
-
-      {trackerViewMode === "2d" ? (
-        <Map2D
-          observer={{ latitude: observer.latitude, longitude: observer.longitude }}
-          satellites={trackedSatellites}
-          currentTime={currentTime}
-          showSunMoon={showSunMoon}
-          onSatelliteDoubleClick={inspectSatellite}
-        />
-      ) : null}
-      {globeMounted ? (
-        <div className={trackerViewMode === "3d" ? undefined : "hidden"}>
+      <div ref={mapSectionRef} className="tracker-map-anchor scroll-mt-16 md:scroll-mt-14">
+        {trackerViewMode === "2d" ? (
+          <Map2D
+            observer={{ latitude: observer.latitude, longitude: observer.longitude }}
+            satellites={trackedSatellites}
+            currentTime={currentTime}
+            layers={mapLayers}
+            onLayersChange={updateMapLayers}
+            followSelected={followSelected}
+            onFollowSelectedChange={setFollowSelected}
+            passOverlay={passOverlay}
+            focusToken={focusToken}
+            immersiveExpand={immersiveExpand}
+            onSatelliteSelect={(id) => inspectSatellite(id)}
+          />
+        ) : (
           <Globe3D
             observer={observer}
             satellites={trackedSatellites}
             currentTime={currentTime}
-            showSunMoon={showSunMoon}
-            onSatelliteDoubleClick={inspectSatellite}
+            layers={mapLayers}
+            onLayersChange={updateMapLayers}
+            followSelected={followSelected}
+            onFollowSelectedChange={setFollowSelected}
+            passOverlay={passOverlay}
+            focusToken={focusToken}
+            immersiveExpand={immersiveExpand}
+            onSatelliteSelect={(id) => inspectSatellite(id)}
             onFallbackTo2D={() => setTrackerViewMode("2d")}
           />
+        )}
+      </div>
+
+      <div
+        className={clsx(
+          "tracker-controls-sheet",
+          controlsSheetOpen && "tracker-controls-sheet-open"
+        )}
+      >
+        <button
+          type="button"
+          className="tracker-controls-sheet-handle"
+          aria-expanded={controlsSheetOpen}
+          onClick={() => setControlsSheetOpen((current) => !current)}
+        >
+          <span className="tracker-controls-sheet-grab" aria-hidden="true" />
+          <span className="inline-flex items-center gap-1.5">
+            <ChevronUp
+              size={16}
+              className={clsx(
+                "transition-transform",
+                controlsSheetOpen && "rotate-180"
+              )}
+            />
+            {controlsSheetOpen ? "Hide controls" : "Satellites & timeline"}
+          </span>
+          <label className="tracker-controls-immersive-toggle">
+            <input
+              type="checkbox"
+              checked={immersiveExpand}
+              onChange={(event) => setImmersiveExpand(event.target.checked)}
+            />
+            Immersive expand
+          </label>
+        </button>
+        <div className="tracker-controls-sheet-body space-y-4">
+          {satelliteList}
+          {timelineCard}
         </div>
-      ) : null}
+      </div>
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <section ref={dataPanelRef} className="panel min-w-0 scroll-mt-16 p-4 sm:p-5 md:scroll-mt-14">
