@@ -1,7 +1,11 @@
 import { WORLD_HEIGHT, WORLD_WIDTH } from "./worldMap";
 
-export const MIN_ZOOM = 1;
+/** Allow zooming out far enough to see polar padding and more longitude. */
+export const MIN_ZOOM = 0.45;
 export const MAX_ZOOM = 6;
+
+/** Extra viewBox padding (as a fraction of world size) past map edges when zoomed out. */
+const EDGE_OVERSHOOT = 0.2;
 
 export interface MapViewport {
   panX: number;
@@ -26,12 +30,22 @@ export function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * Vertical pan limits.
+ * - Zoomed in: keep the map covering the view, with a small overshoot past the poles.
+ * - Zoomed out: allow the map to sit inside the view with padding above/below (and a
+ *   bit past the edges) so top/bottom and more of the sides are visible.
+ */
 export function clampPanY(value: number, zoom: number) {
-  if (zoom <= 1) {
-    return 0;
+  const scaledHeight = WORLD_HEIGHT * zoom;
+  const overshoot = WORLD_HEIGHT * EDGE_OVERSHOOT;
+
+  if (scaledHeight <= WORLD_HEIGHT) {
+    const maxPan = WORLD_HEIGHT - scaledHeight;
+    return clamp(value, -overshoot, maxPan + overshoot);
   }
 
-  return clamp(value, WORLD_HEIGHT - WORLD_HEIGHT * zoom, 0);
+  return clamp(value, WORLD_HEIGHT - scaledHeight - overshoot, overshoot);
 }
 
 /** Cover/slice projection so the map fills the element without letterboxing. */

@@ -405,7 +405,9 @@ export function Map2D({
     ) {
       const bounds = event.currentTarget.getBoundingClientRect();
       const anchor = clientToViewBox(bounds, event.clientX, event.clientY);
-      zoomBy(viewportRef.current.zoom >= MAX_ZOOM - 0.01 ? 1 / MAX_ZOOM : 1.7, anchor);
+      // At max zoom, double-tap resets toward the fit view; otherwise zoom in.
+      const currentZoom = viewportRef.current.zoom;
+      zoomBy(currentZoom >= MAX_ZOOM - 0.01 ? 1 / currentZoom : 1.7, anchor);
       lastTapRef.current = null;
       gestureRef.current = null;
       return;
@@ -504,6 +506,8 @@ export function Map2D({
     gestureRef.current = null;
   }
 
+  // Counter-scale markers/strokes so they stay a stable screen size while remaining
+  // planted on the same geographic points as the map pans/zooms (including past edges).
   const markerScale = 1 / viewport.zoom;
   const legendItems = [
     ...satellites.slice(0, 3).map((satellite) => ({
