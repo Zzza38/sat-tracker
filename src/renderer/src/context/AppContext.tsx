@@ -456,6 +456,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toggleWatchlist: async (satelliteId) => {
       const ids = await toggleWatchlistSatellite("default", satelliteId);
       setWatchlistIds(ids);
+      if (ids.length === 0) {
+        selectSatellite(null);
+      } else if (selectedSatelliteId === satelliteId && !ids.includes(satelliteId)) {
+        selectSatellite(ids[0] ?? null);
+      }
       return ids;
     },
     selectObserver: async (observerId) => {
