@@ -33,9 +33,11 @@ export function ElectronTitlebar() {
   }, [satellites, watchlistIds]);
   const menuSatellites = useMemo(
     () =>
-      selectedSatellite && !watchlistIds.includes(selectedSatellite.id)
-        ? [selectedSatellite, ...trackedSatellites]
-        : trackedSatellites,
+      watchlistIds.length === 0
+        ? []
+        : selectedSatellite && !watchlistIds.includes(selectedSatellite.id)
+          ? [selectedSatellite, ...trackedSatellites]
+          : trackedSatellites,
     [selectedSatellite, trackedSatellites, watchlistIds]
   );
 

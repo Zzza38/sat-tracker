@@ -115,7 +115,6 @@ export function PassesPage() {
     getSatelliteColor,
     satellites,
     watchlistIds,
-    selectedSatellite,
     previewPassOnTracker,
     setPage
   } = useApp();
@@ -133,16 +132,16 @@ export function PassesPage() {
   const [sortKey, setSortKey] = useState<PassSortKey>("aos");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const visiblePassTargets = useMemo(() => {
-    if (watchlistIds.length > 0) {
-      const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
-      return watchlistIds.flatMap((id) => {
-        const satellite = recordsById.get(id);
-        return satellite ? [satellite] : [];
-      });
+    if (watchlistIds.length === 0) {
+      return [];
     }
 
-    return selectedSatellite ? [selectedSatellite] : [];
-  }, [satellites, selectedSatellite, watchlistIds]);
+    const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
+    return watchlistIds.flatMap((id) => {
+      const satellite = recordsById.get(id);
+      return satellite ? [satellite] : [];
+    });
+  }, [satellites, watchlistIds]);
   const visibleSatelliteIds = useMemo(
     () => visiblePassTargets.map((satellite) => satellite.id),
     [visiblePassTargets]
@@ -362,8 +361,8 @@ export function PassesPage() {
         {!error && emptyNotice ? (
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
             <p>
-              Nothing to predict yet. Track satellites in the catalog (or select one on Details)
-              and passes for the next {days} {days === 1 ? "day" : "days"} will appear here.
+              Nothing to predict yet. Track satellites in the catalog and passes for the next{" "}
+              {days} {days === 1 ? "day" : "days"} will appear here.
             </p>
             <Button variant="secondary" size="sm" onClick={() => setPage("catalog")}>
               Open catalog

@@ -141,18 +141,18 @@ export function TrackerPage() {
     setSatelliteColor
   } = useApp();
   const visibleSatellites = useMemo(() => {
-    if (watchlistIds.length > 0) {
-      const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
-      const watched = watchlistIds.flatMap((id) => {
-        const satellite = recordsById.get(id);
-        return satellite ? [satellite] : [];
-      });
-      return selectedSatellite && !watchlistIds.includes(selectedSatellite.id)
-        ? [selectedSatellite, ...watched]
-        : watched;
+    if (watchlistIds.length === 0) {
+      return [];
     }
 
-    return selectedSatellite ? [selectedSatellite] : [];
+    const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
+    const watched = watchlistIds.flatMap((id) => {
+      const satellite = recordsById.get(id);
+      return satellite ? [satellite] : [];
+    });
+    return selectedSatellite && !watchlistIds.includes(selectedSatellite.id)
+      ? [selectedSatellite, ...watched]
+      : watched;
   }, [satellites, selectedSatellite, watchlistIds]);
   const visibleSatelliteIds = useMemo(
     () => visibleSatellites.map((satellite) => satellite.id),
@@ -531,15 +531,16 @@ export function TrackerPage() {
     selectSatellite(id);
   }
 
-  if (!focusSatellite || !selectedSnapshot || trackedSatellites.length === 0) {
-    const propagationFailed = Boolean(focusSatellite) && (!selectedSnapshot || trackedSatellites.length === 0);
+  if (watchlistIds.length === 0 || !focusSatellite || !selectedSnapshot || trackedSatellites.length === 0) {
+    const propagationFailed =
+      watchlistIds.length > 0 && Boolean(focusSatellite) && (!selectedSnapshot || trackedSatellites.length === 0);
     return (
       <div className="panel p-8">
         <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">Live tracker</h1>
         <p className="mt-2 text-[var(--muted)]">
           {propagationFailed
             ? `Could not propagate ${focusSatellite?.name ?? "the selected satellite"}. Its orbital elements may be stale or the object may have decayed - try "Update orbit data" on the Details page, or select another satellite.`
-            : "Add a satellite in Catalog to start live tracking."}
+            : "Track a satellite in Catalog to start live tracking."}
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           {propagationFailed && focusSatellite ? (

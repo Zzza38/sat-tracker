@@ -3,27 +3,10 @@ export interface ElevationColorOptions {
   maxElevationDeg?: number;
 }
 
-const STOPS: ReadonlyArray<readonly [number, number, number]> = [
-  [33, 145, 140],
-  [40, 174, 128],
-  [94, 201, 97],
-  [173, 220, 48],
-  [253, 231, 37]
-];
-
-function sampleRamp(t: number): [number, number, number] {
-  const clamped = Math.min(1, Math.max(0, t));
-  const scaled = clamped * (STOPS.length - 1);
-  const index = Math.min(Math.floor(scaled), STOPS.length - 2);
-  const localT = scaled - index;
-  const from = STOPS[index];
-  const to = STOPS[index + 1];
-
-  return [
-    Math.round(from[0] + (to[0] - from[0]) * localT),
-    Math.round(from[1] + (to[1] - from[1]) * localT),
-    Math.round(from[2] + (to[2] - from[2]) * localT)
-  ];
+// Red near the horizon → semi-neon green at high elevation.
+// Hue 12→140 at 78% sat / 58% light keeps the green halfway neon (readable, not full blast).
+function elevationHue(t: number) {
+  return 12 + t * 128;
 }
 
 export function elevationToColor(
@@ -32,9 +15,8 @@ export function elevationToColor(
 ) {
   const span = Math.max(maxElevationDeg - minElevationDeg, 1);
   const t = Math.min(1, Math.max(0, (elevationDeg - minElevationDeg) / span));
-  const [r, g, b] = sampleRamp(t);
 
-  return `rgb(${r} ${g} ${b})`;
+  return `hsl(${elevationHue(t)} 78% 58%)`;
 }
 
 export function elevationToColorWithAlpha(
@@ -47,7 +29,6 @@ export function elevationToColorWithAlpha(
     1,
     Math.max(0, (elevationDeg - (options?.minElevationDeg ?? 0)) / span)
   );
-  const [r, g, b] = sampleRamp(t);
 
-  return `rgb(${r} ${g} ${b} / ${alpha})`;
+  return `hsla(${elevationHue(t)} 78% 58% / ${alpha})`;
 }

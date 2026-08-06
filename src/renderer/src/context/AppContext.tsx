@@ -169,16 +169,8 @@ function catalogNeedsRefresh(
 }
 
 function chooseDefaultSatelliteId(records: SatelliteRecord[], watchlistIds: string[]) {
-  const firstTracked = watchlistIds.find((id) => records.some((record) => record.id === id));
-  if (firstTracked) {
-    return firstTracked;
-  }
-
-  if (records.length === 0) {
-    return null;
-  }
-
-  return records[0]?.id ?? null;
+  // Only auto-select from the tracked watchlist — never fall back to an arbitrary catalog row.
+  return watchlistIds.find((id) => records.some((record) => record.id === id)) ?? null;
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -273,15 +265,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setWatchlistIds(watchlist?.satelliteIds ?? []);
 
       setSelectedSatelliteIdState((current) => {
+        const trackedIds = watchlist?.satelliteIds ?? [];
         let next: string | null;
-        if (current && records.some((record) => record.id === current)) {
+        if (trackedIds.length === 0) {
+          // Nothing tracked → leave selection empty (do not pick a catalog default).
+          next = null;
+        } else if (current && records.some((record) => record.id === current)) {
           next = current;
         } else {
           const restored = readUiState().selectedSatelliteId;
           if (restored && records.some((record) => record.id === restored)) {
             next = restored;
           } else {
-            next = chooseDefaultSatelliteId(records, watchlist?.satelliteIds ?? []);
+            next = chooseDefaultSatelliteId(records, trackedIds);
           }
         }
         writeUiState({ selectedSatelliteId: next });
@@ -306,9 +302,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setSettings(freshSettings);
           setWatchlistIds(freshWatchlist?.satelliteIds ?? []);
           setSelectedSatelliteIdState((current) => {
-            const next = current && freshRecords.some((record) => record.id === current)
-              ? current
-              : chooseDefaultSatelliteId(freshRecords, freshWatchlist?.satelliteIds ?? []);
+            const trackedIds = freshWatchlist?.satelliteIds ?? [];
+            const next =
+              trackedIds.length === 0
+                ? null
+                : current && freshRecords.some((record) => record.id === current)
+                  ? current
+                  : chooseDefaultSatelliteId(freshRecords, trackedIds);
             writeUiState({ selectedSatelliteId: next });
             return next;
           });
@@ -456,6 +456,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toggleWatchlist: async (satelliteId) => {
       const ids = await toggleWatchlistSatellite("default", satelliteId);
       setWatchlistIds(ids);
+      if (ids.length === 0) {
+        selectSatellite(null);
+      } else if (selectedSatelliteId === satelliteId && !ids.includes(satelliteId)) {
+        selectSatellite(ids[0] ?? null);
+      }
       return ids;
     },
     selectObserver: async (observerId) => {
