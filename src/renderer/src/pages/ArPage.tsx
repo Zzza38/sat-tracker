@@ -176,7 +176,6 @@ export function ArPage() {
   const {
     satellites,
     watchlistIds,
-    selectedSatellite,
     selectedSatelliteId,
     observer,
     selectSatellite,
@@ -222,14 +221,17 @@ export function ArPage() {
   );
 
   const visibleSatellites = useMemo(() => {
+    if (watchlistIds.length === 0) {
+      return [];
+    }
+
     const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
     const watched = watchlistIds.flatMap((id) => {
       const satellite = recordsById.get(id);
       return satellite ? [satellite] : [];
     });
-    return (watched.length > 0 ? watched : selectedSatellite ? [selectedSatellite] : [])
-      .slice(0, MAX_AR_SATELLITES);
-  }, [satellites, selectedSatellite, watchlistIds]);
+    return watched.slice(0, MAX_AR_SATELLITES);
+  }, [satellites, watchlistIds]);
   const visibleIds = useMemo(
     () => visibleSatellites.map((satellite) => satellite.id),
     [visibleSatellites]
