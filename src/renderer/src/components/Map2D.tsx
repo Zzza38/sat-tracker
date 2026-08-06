@@ -701,7 +701,7 @@ export function Map2D({
 
       <div className="tracker-map-chrome pointer-events-none absolute inset-0 z-10 p-2.5 sm:p-3">
         <div className="tracker-map-zoom-badge absolute left-2.5 top-2.5 rounded-md border border-[var(--line)] bg-black/45 px-2 py-1 mono text-[0.68rem] text-[var(--muted)] backdrop-blur sm:left-3 sm:top-3">
-          {viewport.zoom.toFixed(1)}x
+          {viewport.zoom >= 1 ? viewport.zoom.toFixed(1) : viewport.zoom.toFixed(2)}x
         </div>
 
         <button
