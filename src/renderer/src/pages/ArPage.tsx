@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   BellRing,
+  Bug,
   Camera,
   CameraOff,
   Crosshair,
+  Download,
+  Flag,
   LocateFixed,
-  Orbit,
-  Settings2
+  Move,
+  Satellite,
+  Settings2,
+  Trash2
 } from "lucide-react";
 import { computeOrbitSnapshot } from "@/shared/propagation/engine";
 import { predictPassesBulk } from "@/shared/passes/predictor";
@@ -18,22 +23,36 @@ import { useTicker } from "../hooks/useTicker";
 import { Button } from "../components/ui/button";
 import { Slider } from "../components/ui/slider";
 import {
+  AngleFilter,
   DEFAULT_CAMERA_FOV_DEG,
   MAX_CAMERA_FOV_DEG,
+  MAX_COMPASS_TRIM_DEG,
   MIN_CAMERA_FOV_DEG,
-  directionFromOrientation,
+  OrientationFilter,
+  applyHeadingTrim,
   dishFaceElevation,
-  interpolateViewDirection,
-  orientationSmoothingFactor,
-  projectLookAngle,
+  interpolateLookAngles,
+  quaternionFromView,
   selectNextLookPass,
-  shouldAcceptOrientationSource,
   signedAngleDifference,
   stageFieldOfView,
-  type FieldOfView,
+  viewFromQuaternion,
+  type LookAngles,
   type OrientationSource,
+  type Quaternion,
   type ViewDirection
 } from "../lib/ar";
+import { startOrientationStream } from "../lib/arSensors";
+import {
+  arDebugEntryCount,
+  arDebugPoi,
+  arDebugSample,
+  clearArDebugLog,
+  exportArDebugLog,
+  isArDebugEnabled,
+  setArDebugEnabled
+} from "../lib/arDebug";
+import { renderArScene, type ArHitRegion, type ArSceneTarget } from "../lib/arRender";
 import {
   hasPassReminder,
   REMINDERS_CHANGED_EVENT,
@@ -43,15 +62,16 @@ import { requestNotificationPermission } from "../lib/platform";
 
 const DISH_OFFSET_KEY = "sat-tracker-dish-offset";
 const CAMERA_FOV_KEY = "sat-tracker-camera-fov";
+const COMPASS_TRIM_KEY = "sat-tracker-compass-trim";
 const MAX_AR_SATELLITES = 12;
 const ORBIT_POINTS = 46;
 const ORBIT_STEP_SECONDS = 60;
+/** Span between the two live propagation samples the frame loop blends. */
+const SNAPSHOT_SPAN_MS = 2000;
 /** Pass-window quantisation, so the cached prediction is reusable between runs. */
 const PASS_WINDOW_BUCKET_MS = 5 * 60_000;
-
-interface DeviceOrientationWithCompass extends DeviceOrientationEvent {
-  webkitCompassHeading?: number;
-}
+const HUD_UPDATE_INTERVAL_MS = 120;
+const DEG = Math.PI / 180;
 
 interface DeviceOrientationPermission {
   requestPermission?: () => Promise<"granted" | "denied">;
@@ -64,42 +84,32 @@ type OrientationPermissionResult =
 interface SkyTarget {
   satellite: SatelliteRecord;
   snapshot: OrbitSnapshot;
+  nextSnapshot: OrbitSnapshot | null;
   color: string;
-  orbit: OrbitSnapshot[];
 }
 
-function readDishOffset() {
-  const stored = Number(localStorage.getItem(DISH_OFFSET_KEY));
-  return Number.isFinite(stored) ? Math.max(0, Math.min(45, stored)) : 0;
-}
+type SensorState = "idle" | "pending" | "live" | "unavailable";
 
-function readCameraFov() {
-  const raw = localStorage.getItem(CAMERA_FOV_KEY);
+const SOURCE_LABELS: Record<OrientationSource, string> = {
+  fused: "fused sensors",
+  absolute: "compass",
+  relative: "gyro only"
+};
+
+function readStoredNumber(key: string, fallback: number, min: number, max: number) {
+  const raw = localStorage.getItem(key);
   const stored = Number(raw);
-  if (raw === null || !Number.isFinite(stored) || stored <= 0) {
-    return DEFAULT_CAMERA_FOV_DEG;
+  if (raw === null || !Number.isFinite(stored)) {
+    return fallback;
   }
-  return Math.max(MIN_CAMERA_FOV_DEG, Math.min(MAX_CAMERA_FOV_DEG, stored));
+  return Math.max(min, Math.min(max, stored));
 }
 
-/**
- * Landscape rotates the screen axes away from the device axes, so the overlay
- * needs the current angle to stay square with the camera frame.
- */
-function readScreenAngle() {
-  const angle = window.screen?.orientation?.angle;
-  if (typeof angle === "number") {
-    return angle;
-  }
-  const legacy = (window as { orientation?: number }).orientation;
-  return typeof legacy === "number" ? normalizeScreenAngle(legacy) : 0;
-}
-
-function normalizeScreenAngle(value: number) {
-  return ((value % 360) + 360) % 360;
-}
-
-function safeSnapshot(satellite: SatelliteRecord, date: Date, observer: ReturnType<typeof useApp>["observer"]) {
+function safeSnapshot(
+  satellite: SatelliteRecord,
+  date: Date,
+  observer: ReturnType<typeof useApp>["observer"]
+) {
   try {
     return computeOrbitSnapshot(satellite, date, observer);
   } catch {
@@ -129,49 +139,6 @@ function requestOrientationPermissionFromGesture(): Promise<OrientationPermissio
   }
 }
 
-function orbitSegments(
-  orbit: OrbitSnapshot[],
-  view: ViewDirection,
-  width: number,
-  height: number,
-  fov: FieldOfView
-) {
-  const segments: string[][] = [];
-  let segment: string[] = [];
-
-  for (const point of orbit) {
-    const projected = projectLookAngle(
-      point.azimuthDeg,
-      point.elevationDeg,
-      view,
-      width,
-      height,
-      fov
-    );
-    const withinMargin =
-      !projected.behind &&
-      projected.x >= -width * 0.12 &&
-      projected.x <= width * 1.12 &&
-      projected.y >= -height * 0.12 &&
-      projected.y <= height * 1.12 &&
-      point.elevationDeg >= -5;
-
-    if (withinMargin) {
-      segment.push(`${projected.x.toFixed(1)},${projected.y.toFixed(1)}`);
-    } else if (segment.length > 1) {
-      segments.push(segment);
-      segment = [];
-    } else {
-      segment = [];
-    }
-  }
-
-  if (segment.length > 1) {
-    segments.push(segment);
-  }
-  return segments;
-}
-
 export function ArPage() {
   const {
     satellites,
@@ -179,33 +146,53 @@ export function ArPage() {
     selectedSatelliteId,
     observer,
     selectSatellite,
-    getSatelliteColor
+    getSatelliteColor,
+    setPage
   } = useApp();
+
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const orientationCleanupRef = useRef<(() => void) | null>(null);
-  const orientationSourceRef = useRef<OrientationSource | null>(null);
-  const lastAbsoluteOrientationAtRef = useRef(0);
-  const orientationTargetRef = useRef<ViewDirection>({ headingDeg: 0, elevationDeg: 0 });
-  const orientationFrameRef = useRef<number | null>(null);
-  const orientationFrameTimeRef = useRef<number | null>(null);
+  const orientationStopRef = useRef<(() => void) | null>(null);
   const toastTimerRef = useRef<number | null>(null);
-  const viewRef = useRef<ViewDirection>({ headingDeg: 0, elevationDeg: 0, rollDeg: 0 });
-  const hasFixRef = useRef(false);
+  const sensorTimeoutRef = useRef<number | null>(null);
+
+  const filterRef = useRef(new OrientationFilter());
+  const ribbonHeadingFilterRef = useRef(new AngleFilter());
+  const sensorSampleRef = useRef<{ q: Quaternion; source: OrientationSource } | null>(null);
+  const sensorSourceRef = useRef<OrientationSource | null>(null);
+  const manualViewRef = useRef<ViewDirection>({ headingDeg: 0, elevationDeg: 24, rollDeg: 0 });
+  const viewRef = useRef<ViewDirection>({ headingDeg: 0, elevationDeg: 24, rollDeg: 0 });
+  const hitRegionsRef = useRef<ArHitRegion[]>([]);
+  const lastHudUpdateRef = useRef(0);
+  const dragRef = useRef<{
+    pointerId: number;
+    lastX: number;
+    lastY: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
+
   const liveNow = useTicker(1000);
-  const [cameraActive, setCameraActive] = useState(false);
   const [arStarted, setArStarted] = useState(false);
-  const [sensorActive, setSensorActive] = useState(false);
-  const [status, setStatus] = useState("Ready for camera and motion access");
-  const [view, setView] = useState<ViewDirection>({ headingDeg: 0, elevationDeg: 0 });
-  const [manualView, setManualView] = useState(false);
-  const [dishOffset, setDishOffset] = useState(readDishOffset);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [sensorState, setSensorState] = useState<SensorState>("idle");
+  const [sensorSource, setSensorSource] = useState<OrientationSource | null>(null);
+  const [manualMode, setManualMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [stageSize, setStageSize] = useState({ width: 390, height: 700 });
   const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
-  const [cameraFov, setCameraFov] = useState(readCameraFov);
+  const [dishOffset, setDishOffset] = useState(() => readStoredNumber(DISH_OFFSET_KEY, 0, 0, 45));
+  const [cameraFov, setCameraFov] = useState(() =>
+    readStoredNumber(CAMERA_FOV_KEY, DEFAULT_CAMERA_FOV_DEG, MIN_CAMERA_FOV_DEG, MAX_CAMERA_FOV_DEG)
+  );
+  const [compassTrim, setCompassTrim] = useState(() =>
+    readStoredNumber(COMPASS_TRIM_KEY, 0, -MAX_COMPASS_TRIM_DEG, MAX_COMPASS_TRIM_DEG)
+  );
+  const [debugMode, setDebugMode] = useState(isArDebugEnabled);
   const [, setReminderRevision] = useState(0);
 
   const fieldOfView = useMemo(
@@ -224,53 +211,82 @@ export function ArPage() {
     if (watchlistIds.length === 0) {
       return [];
     }
-
     const recordsById = new Map(satellites.map((satellite) => [satellite.id, satellite]));
-    const watched = watchlistIds.flatMap((id) => {
-      const satellite = recordsById.get(id);
-      return satellite ? [satellite] : [];
-    });
-    return watched.slice(0, MAX_AR_SATELLITES);
+    return watchlistIds
+      .flatMap((id) => {
+        const satellite = recordsById.get(id);
+        return satellite ? [satellite] : [];
+      })
+      .slice(0, MAX_AR_SATELLITES);
   }, [satellites, watchlistIds]);
   const visibleIds = useMemo(
     () => visibleSatellites.map((satellite) => satellite.id),
     [visibleSatellites]
   );
+
+  // Sky trails only shift meaningfully over tens of seconds, so recompute on a
+  // coarse bucket instead of burning 500+ propagations every second.
   const orbitTimeKey = Math.floor(liveNow.getTime() / 30_000);
-  const skyTargets = useMemo<SkyTarget[]>(() => {
+  const orbitsById = useMemo(() => {
+    const start = new Date(orbitTimeKey * 30_000);
+    const orbits = new Map<string, LookAngles[]>();
+    for (const satellite of visibleSatellites) {
+      const points: LookAngles[] = [];
+      for (let index = 0; index < ORBIT_POINTS; index += 1) {
+        const snapshot = safeSnapshot(
+          satellite,
+          new Date(start.getTime() + index * ORBIT_STEP_SECONDS * 1000),
+          observer
+        );
+        if (snapshot) {
+          points.push({
+            azimuthDeg: snapshot.azimuthDeg,
+            elevationDeg: snapshot.elevationDeg
+          });
+        }
+      }
+      orbits.set(satellite.id, points);
+    }
+    return orbits;
+  }, [observer, orbitTimeKey, visibleSatellites]);
+
+  // Live positions refresh every second; the frame loop interpolates between
+  // the two samples so markers glide at display rate instead of stepping.
+  const secondKey = Math.floor(liveNow.getTime() / 1000);
+  const liveSky = useMemo(() => {
     const now = new Date();
-    return visibleSatellites.flatMap((satellite) => {
+    const targets = visibleSatellites.flatMap((satellite): SkyTarget[] => {
       const snapshot = safeSnapshot(satellite, now, observer);
       if (!snapshot) {
         return [];
       }
-      const orbit = Array.from({ length: ORBIT_POINTS }, (_, index) =>
-        safeSnapshot(
-          satellite,
-          new Date(now.getTime() + index * ORBIT_STEP_SECONDS * 1000),
-          observer
-        )
-      ).filter((point): point is OrbitSnapshot => point !== null);
-      return [{
+      const nextSnapshot = safeSnapshot(
         satellite,
-        snapshot,
-        orbit,
-        color: getSatelliteColor(satellite.id, visibleIds)
-      }];
+        new Date(now.getTime() + SNAPSHOT_SPAN_MS),
+        observer
+      );
+      return [
+        {
+          satellite,
+          snapshot,
+          nextSnapshot,
+          color: getSatelliteColor(satellite.id, visibleIds)
+        }
+      ];
     });
-  }, [getSatelliteColor, observer, orbitTimeKey, visibleIds, visibleSatellites]);
-  const focus = skyTargets.find((target) => target.satellite.id === selectedSatelliteId) ?? skyTargets[0];
+    return { targets, epochMs: now.getTime() };
+  }, [getSatelliteColor, observer, secondKey, visibleIds, visibleSatellites]);
+  const skyTargets = liveSky.targets;
+  const focus =
+    skyTargets.find((target) => target.satellite.id === selectedSatelliteId) ?? skyTargets[0];
+  const focusSatellite = focus?.satellite;
 
   // A seven-day scan is ~20k propagations. Run it on the shared prediction
   // worker instead of the render thread, and quantise the window so repeat
   // runs hit the prediction cache rather than recomputing every tick.
-  // Selection of the next upcoming look (future AOS) is separate: the worker
-  // only refreshes on the five-minute bucket, but as time advances we must
-  // drop past/in-progress windows from the readout without waiting for that
-  // bucket to roll.
-  const passWindowStart = Math.floor(liveNow.getTime() / PASS_WINDOW_BUCKET_MS) * PASS_WINDOW_BUCKET_MS;
+  const passWindowStart =
+    Math.floor(liveNow.getTime() / PASS_WINDOW_BUCKET_MS) * PASS_WINDOW_BUCKET_MS;
   const [predictedPasses, setPredictedPasses] = useState<PassPrediction[]>([]);
-  const focusSatellite = focus?.satellite;
 
   useEffect(() => {
     if (!focusSatellite) {
@@ -301,19 +317,51 @@ export function ArPage() {
     };
   }, [focusSatellite, observer, passWindowStart]);
 
-  const nextPass = useMemo(() => {
-    const nowIso = new Date(orbitTimeKey * 30_000).toISOString();
-    return selectNextLookPass(predictedPasses, nowIso);
-  }, [orbitTimeKey, predictedPasses]);
-
+  const nextPass = useMemo(
+    () => selectNextLookPass(predictedPasses, new Date(secondKey * 1000).toISOString()),
+    [predictedPasses, secondKey]
+  );
   const reminderSet = nextPass ? hasPassReminder(nextPass) : false;
+
+  // --- Refs mirroring the latest render state for the frame loop -----------
+
+  const frameStateRef = useRef({
+    stageSize,
+    fieldOfView,
+    dishOffset,
+    compassTrim,
+    manualMode,
+    focusId: focus?.satellite.id ?? null,
+    liveSky,
+    orbitsById,
+    nextPass
+  });
+  frameStateRef.current = {
+    stageSize,
+    fieldOfView,
+    dishOffset,
+    compassTrim,
+    manualMode,
+    focusId: focus?.satellite.id ?? null,
+    liveSky,
+    orbitsById,
+    nextPass
+  };
+
+  const hudAzRef = useRef<HTMLElement | null>(null);
+  const hudElRef = useRef<HTMLElement | null>(null);
+  const hudRangeRef = useRef<HTMLElement | null>(null);
+  const hudDishRef = useRef<HTMLElement | null>(null);
+  const hudGuidanceRef = useRef<HTMLDivElement | null>(null);
+
+  // --- Stage / canvas plumbing ----------------------------------------------
 
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) {
       return;
     }
-    const observer = new ResizeObserver(([entry]) => {
+    const resizeObserver = new ResizeObserver(([entry]) => {
       if (entry) {
         setStageSize({
           width: Math.max(1, entry.contentRect.width),
@@ -321,9 +369,19 @@ export function ArPage() {
         });
       }
     });
-    observer.observe(stage);
-    return () => observer.disconnect();
+    resizeObserver.observe(stage);
+    return () => resizeObserver.disconnect();
   }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    const dpr = Math.min(2.5, window.devicePixelRatio || 1);
+    canvas.width = Math.round(stageSize.width * dpr);
+    canvas.height = Math.round(stageSize.height * dpr);
+  }, [stageSize]);
 
   useEffect(() => {
     const refresh = () => setReminderRevision((value) => value + 1);
@@ -334,20 +392,250 @@ export function ArPage() {
   useEffect(() => {
     return () => {
       streamRef.current?.getTracks().forEach((track) => track.stop());
-      orientationCleanupRef.current?.();
-      if (orientationFrameRef.current !== null) {
-        window.cancelAnimationFrame(orientationFrameRef.current);
-      }
+      orientationStopRef.current?.();
       if (toastTimerRef.current !== null) {
         window.clearTimeout(toastTimerRef.current);
+      }
+      if (sensorTimeoutRef.current !== null) {
+        window.clearTimeout(sensorTimeoutRef.current);
       }
     };
   }, []);
 
-  function applyView(next: ViewDirection) {
-    viewRef.current = next;
-    setView(next);
+  // --- Frame loop -------------------------------------------------------------
+
+  const renderFrame = useCallback((frameTimeMs: number) => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) {
+      return;
+    }
+    const state = frameStateRef.current;
+    const { width, height } = state.stageSize;
+    const dpr = Math.min(2.5, window.devicePixelRatio || 1);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Orientation: manual aim and the sensor stream share one filtered path.
+    const sensorSample = sensorSampleRef.current;
+    const useManual = state.manualMode || sensorSample === null;
+    const targetQuaternion = useManual
+      ? quaternionFromView(manualViewRef.current)
+      : applyHeadingTrim(sensorSample.q, state.compassTrim);
+    const filtered = filterRef.current.update(targetQuaternion, frameTimeMs);
+    const view = viewFromQuaternion(filtered);
+    viewRef.current = view;
+
+    // The ribbon heading gets its own smoothing, scaled by cos(elevation):
+    // pointing the camera up amplifies heading wobble by 1/cos(elevation), so
+    // the readout is damped harder exactly when the geometry misbehaves.
+    const ribbonHeadingDeg = ribbonHeadingFilterRef.current.update(
+      view.headingDeg,
+      frameTimeMs,
+      Math.abs(Math.cos(view.elevationDeg * DEG))
+    );
+
+    // Satellites: blend the two 1 Hz propagation samples up to display rate.
+    const blend = (Date.now() - state.liveSky.epochMs) / SNAPSHOT_SPAN_MS;
+    const sceneTargets: ArSceneTarget[] = state.liveSky.targets.map((target) => {
+      const from: LookAngles = {
+        azimuthDeg: target.snapshot.azimuthDeg,
+        elevationDeg: target.snapshot.elevationDeg,
+        rangeKm: target.snapshot.rangeKm
+      };
+      const to: LookAngles = target.nextSnapshot
+        ? {
+            azimuthDeg: target.nextSnapshot.azimuthDeg,
+            elevationDeg: target.nextSnapshot.elevationDeg,
+            rangeKm: target.nextSnapshot.rangeKm
+          }
+        : from;
+      const look = interpolateLookAngles(from, to, Math.min(1.5, blend));
+      return {
+        id: target.satellite.id,
+        name: target.satellite.name,
+        color: target.color,
+        selected: target.satellite.id === state.focusId,
+        azimuthDeg: look.azimuthDeg,
+        elevationDeg: look.elevationDeg,
+        rangeKm: look.rangeKm ?? target.snapshot.rangeKm,
+        orbit: state.orbitsById.get(target.satellite.id) ?? []
+      };
+    });
+
+    const focusTarget = sceneTargets.find((target) => target.selected) ?? null;
+    const guidanceTarget: LookAngles | null = focusTarget
+      ? {
+          azimuthDeg: focusTarget.azimuthDeg,
+          elevationDeg:
+            state.dishOffset > 0
+              ? dishFaceElevation(focusTarget.elevationDeg, state.dishOffset)
+              : focusTarget.elevationDeg
+        }
+      : null;
+
+    const result = renderArScene(ctx, {
+      width,
+      height,
+      view,
+      fov: state.fieldOfView,
+      targets: sceneTargets,
+      dishTarget:
+        focusTarget && state.dishOffset > 0
+          ? {
+              azimuthDeg: focusTarget.azimuthDeg,
+              elevationDeg: dishFaceElevation(focusTarget.elevationDeg, state.dishOffset)
+            }
+          : null,
+      guidanceTarget,
+      ribbonHeadingDeg,
+      timeMs: frameTimeMs
+    });
+    hitRegionsRef.current = result.hits;
+
+    // HUD text runs on the DOM directly - no React work per frame.
+    if (frameTimeMs - lastHudUpdateRef.current < HUD_UPDATE_INTERVAL_MS) {
+      return;
+    }
+    lastHudUpdateRef.current = frameTimeMs;
+
+    if (isArDebugEnabled()) {
+      // What the user actually sees, to correlate against the sensor entries.
+      arDebugSample("view", 400, {
+        h: Math.round(view.headingDeg * 10) / 10,
+        el: Math.round(view.elevationDeg * 10) / 10,
+        ribbon: Math.round(ribbonHeadingDeg * 10) / 10,
+        src: sensorSourceRef.current,
+        manual: useManual
+      });
+    }
+
+    if (focusTarget) {
+      if (hudAzRef.current) {
+        hudAzRef.current.textContent = `${focusTarget.azimuthDeg.toFixed(1)}°`;
+      }
+      if (hudElRef.current) {
+        hudElRef.current.textContent = `${focusTarget.elevationDeg.toFixed(1)}°`;
+      }
+      if (hudRangeRef.current) {
+        hudRangeRef.current.textContent = `${Math.round(focusTarget.rangeKm).toLocaleString()} km`;
+      }
+      if (hudDishRef.current) {
+        hudDishRef.current.textContent = `${dishFaceElevation(
+          focusTarget.elevationDeg,
+          state.dishOffset
+        ).toFixed(1)}°`;
+      }
+      if (hudGuidanceRef.current && guidanceTarget) {
+        const aimBelowHorizon = guidanceTarget.elevationDeg < 0;
+        let guidance: string;
+        if (focusTarget.elevationDeg <= 0) {
+          guidance = state.nextPass
+            ? `Below the horizon · rises ${formatTimestamp(state.nextPass.aos)}`
+            : "Below the horizon · no pass in 7 days";
+        } else if (aimBelowHorizon) {
+          guidance = "Dish aim point is below the horizon";
+        } else if ((result.guidanceOffAxisDeg ?? 180) <= 2.5) {
+          guidance = "On target — hold steady";
+        } else {
+          const azimuthError = signedAngleDifference(guidanceTarget.azimuthDeg, view.headingDeg);
+          const elevationError = guidanceTarget.elevationDeg - view.elevationDeg;
+          guidance = `Turn ${Math.abs(azimuthError).toFixed(0)}° ${
+            azimuthError < 0 ? "left" : "right"
+          } · aim ${Math.abs(elevationError).toFixed(0)}° ${elevationError < 0 ? "down" : "up"}`;
+        }
+        hudGuidanceRef.current.textContent = guidance;
+        hudGuidanceRef.current.dataset.state = focusTarget.elevationDeg <= 0
+          ? "below"
+          : (result.guidanceOffAxisDeg ?? 180) <= 2.5
+            ? "locked"
+            : "seeking";
+      }
+    }
+  }, []);
+
+  const renderFrameRef = useRef(renderFrame);
+  renderFrameRef.current = renderFrame;
+
+  useEffect(() => {
+    if (!arStarted) {
+      return;
+    }
+    let rafId = 0;
+    const loop = (timestamp: number) => {
+      rafId = window.requestAnimationFrame(loop);
+      renderFrameRef.current(timestamp);
+    };
+    rafId = window.requestAnimationFrame(loop);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [arStarted]);
+
+  // --- Pointer input: tap to select, drag to aim in manual mode ---------------
+
+  function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    dragRef.current = {
+      pointerId: event.pointerId,
+      lastX: event.clientX - rect.left,
+      lastY: event.clientY - rect.top,
+      startX: event.clientX - rect.left,
+      startY: event.clientY - rect.top,
+      moved: false
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
   }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const dx = x - drag.lastX;
+    const dy = y - drag.lastY;
+    drag.lastX = x;
+    drag.lastY = y;
+    if (Math.hypot(x - drag.startX, y - drag.startY) > 8) {
+      drag.moved = true;
+    }
+
+    if (!frameStateRef.current.manualMode || !drag.moved) {
+      return;
+    }
+    // Content follows the finger, like panning a panorama.
+    const focal = frameStateRef.current.fieldOfView.focalPx;
+    const current = manualViewRef.current;
+    manualViewRef.current = {
+      headingDeg: ((current.headingDeg - (dx / focal) / DEG) % 360 + 360) % 360,
+      elevationDeg: Math.max(-88, Math.min(88, current.elevationDeg + (dy / focal) / DEG)),
+      rollDeg: 0
+    };
+  }
+
+  function handlePointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    if (!drag || drag.pointerId !== event.pointerId || drag.moved) {
+      return;
+    }
+    // Treat it as a tap: select the closest marker under the finger.
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    let best: { id: string; distance: number } | null = null;
+    for (const hit of hitRegionsRef.current) {
+      const distance = Math.hypot(hit.x - x, hit.y - y);
+      if (distance <= hit.radius && (best === null || distance < best.distance)) {
+        best = { id: hit.id, distance };
+      }
+    }
+    if (best) {
+      selectSatellite(best.id);
+    }
+  }
+
+  // --- Session control -----------------------------------------------------------
 
   function syncFrameSize() {
     const video = videoRef.current;
@@ -372,10 +660,42 @@ export function ArPage() {
     }, 2600);
   }
 
+  function handleMarkPoi() {
+    const n = arDebugPoi();
+    showToast(`POI #${n} marked in debug log`);
+  }
+
+  async function handleExportDebug() {
+    const result = await exportArDebugLog();
+    showToast(
+      result === "empty"
+        ? "Debug log is empty"
+        : result === "cancelled"
+          ? "Export cancelled"
+          : result === "shared"
+            ? "Debug log shared"
+            : "Debug log downloaded"
+    );
+  }
+
+  function toggleDebugMode() {
+    const next = !debugMode;
+    setArDebugEnabled(next);
+    setDebugMode(next);
+    showToast(next ? "Debug logging on — mark POIs when it misbehaves" : "Debug logging off");
+  }
+
+  function enableManualAim() {
+    // Seamless hand-off: keep looking where the sensors left the view.
+    manualViewRef.current = { ...viewRef.current, rollDeg: 0 };
+    filterRef.current.reset();
+    ribbonHeadingFilterRef.current.reset();
+    setManualMode(true);
+  }
+
   async function startAr() {
     setArStarted(true);
-    setStatus("Requesting camera and motion access...");
-    let cameraStarted = false;
+    setSensorState("pending");
 
     // Start the iOS motion request synchronously inside the button click.
     // Awaiting getUserMedia first causes Mobile Safari to discard the user
@@ -399,11 +719,9 @@ export function ArPage() {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
       }
-      cameraStarted = true;
       setCameraActive(true);
-    } catch (error) {
+    } catch {
       setCameraActive(false);
-      setStatus(error instanceof Error ? error.message : "Camera access failed.");
     }
 
     try {
@@ -415,124 +733,36 @@ export function ArPage() {
         throw new Error("Motion access was denied.");
       }
 
-      orientationSourceRef.current = null;
-      lastAbsoluteOrientationAtRef.current = 0;
-      orientationFrameTimeRef.current = null;
-      hasFixRef.current = false;
-      if (orientationFrameRef.current !== null) {
-        window.cancelAnimationFrame(orientationFrameRef.current);
-        orientationFrameRef.current = null;
+      orientationStopRef.current?.();
+      sensorSampleRef.current = null;
+      sensorSourceRef.current = null;
+      orientationStopRef.current = startOrientationStream((quaternion, source) => {
+        if (sensorSampleRef.current === null) {
+          // First fix: snap straight there instead of easing in from north.
+          filterRef.current.reset();
+          ribbonHeadingFilterRef.current.reset();
+          setSensorState("live");
+          setManualMode(false);
+        }
+        sensorSampleRef.current = { q: quaternion, source };
+        if (sensorSourceRef.current !== source) {
+          sensorSourceRef.current = source;
+          setSensorSource(source);
+        }
+      });
+
+      if (sensorTimeoutRef.current !== null) {
+        window.clearTimeout(sensorTimeoutRef.current);
       }
-
-      const animateOrientation = (timestamp: number) => {
-        const previousTimestamp = orientationFrameTimeRef.current ?? timestamp;
-        orientationFrameTimeRef.current = timestamp;
-        const factor = orientationSmoothingFactor(timestamp - previousTimestamp);
-        const next = interpolateViewDirection(
-          viewRef.current,
-          orientationTargetRef.current,
-          factor
-        );
-
-        if (next === viewRef.current) {
-          // Caught up with the sensor. Park the loop rather than re-rendering
-          // every frame with an unchanged view; the next event restarts it.
-          orientationFrameRef.current = null;
-          orientationFrameTimeRef.current = null;
-          return;
+      sensorTimeoutRef.current = window.setTimeout(() => {
+        if (sensorSampleRef.current === null) {
+          setSensorState("unavailable");
+          setManualMode(true);
         }
-
-        viewRef.current = next;
-        setView(next);
-        orientationFrameRef.current = window.requestAnimationFrame(animateOrientation);
-      };
-
-      const handleOrientation = (
-        event: DeviceOrientationEvent,
-        eventSource: "absolute" | "relative"
-      ) => {
-        const compassEvent = event as DeviceOrientationWithCompass;
-        const source =
-          eventSource === "absolute" || event.absolute || compassEvent.webkitCompassHeading !== undefined
-            ? "absolute"
-            : "relative";
-
-        const now = performance.now();
-        if (!shouldAcceptOrientationSource(
-          orientationSourceRef.current,
-          source,
-          now - lastAbsoluteOrientationAtRef.current
-        )) {
-          return;
-        }
-
-        const direction = directionFromOrientation({
-          alpha: event.alpha,
-          beta: event.beta,
-          gamma: event.gamma,
-          compassHeading: compassEvent.webkitCompassHeading,
-          screenAngleDeg: readScreenAngle()
-        });
-        if (direction) {
-          if (source === "absolute") {
-            lastAbsoluteOrientationAtRef.current = now;
-          }
-          orientationSourceRef.current = source;
-          orientationTargetRef.current = direction;
-          if (!hasFixRef.current) {
-            // First reading: jump straight there instead of easing in from north.
-            hasFixRef.current = true;
-            viewRef.current = direction;
-            setView(direction);
-          }
-          if (orientationFrameRef.current === null) {
-            orientationFrameTimeRef.current = null;
-            orientationFrameRef.current = window.requestAnimationFrame(animateOrientation);
-          }
-          setSensorActive(true);
-          setManualView(false);
-          setStatus(cameraStarted ? "Live camera and orientation" : "Orientation live · camera unavailable");
-        }
-      };
-      const handleAbsoluteOrientation = (event: DeviceOrientationEvent) =>
-        handleOrientation(event, "absolute");
-      const handleRelativeOrientation = (event: DeviceOrientationEvent) =>
-        handleOrientation(event, "relative");
-      orientationCleanupRef.current?.();
-      window.addEventListener(
-        "deviceorientationabsolute",
-        handleAbsoluteOrientation as EventListener,
-        true
-      );
-      window.addEventListener("deviceorientation", handleRelativeOrientation, true);
-      orientationCleanupRef.current = () => {
-        window.removeEventListener(
-          "deviceorientationabsolute",
-          handleAbsoluteOrientation as EventListener,
-          true
-        );
-        window.removeEventListener("deviceorientation", handleRelativeOrientation, true);
-        if (orientationFrameRef.current !== null) {
-          window.cancelAnimationFrame(orientationFrameRef.current);
-          orientationFrameRef.current = null;
-        }
-      };
-      window.setTimeout(() => {
-        setSensorActive((active) => {
-          if (!active) {
-            setManualView(true);
-            setStatus(
-              cameraStarted
-                ? "Camera live · orientation unavailable, use manual aim"
-                : "Camera unavailable · use manual aim"
-            );
-          }
-          return active;
-        });
       }, 1800);
-    } catch (error) {
-      setManualView(true);
-      setStatus(error instanceof Error ? `${error.message} Use manual aim.` : "Use manual aim.");
+    } catch {
+      setSensorState("unavailable");
+      setManualMode(true);
     }
   }
 
@@ -544,7 +774,6 @@ export function ArPage() {
     }
     setCameraActive(false);
     setFrameSize({ width: 0, height: 0 });
-    setStatus(sensorActive ? "Orientation live · camera off" : "AR paused");
   }
 
   async function toggleReminder() {
@@ -563,11 +792,21 @@ export function ArPage() {
     showToast(enabled ? "Alert set · 10 min before pass" : "Pass alert removed");
   }
 
-  const focusDishElevation = focus
-    ? dishFaceElevation(focus.snapshot.elevationDeg, dishOffset)
-    : 0;
-  const azimuthError = focus ? signedAngleDifference(focus.snapshot.azimuthDeg, view.headingDeg) : 0;
-  const elevationError = focus ? focusDishElevation - view.elevationDeg : 0;
+  const statusText = !arStarted
+    ? "Ready"
+    : sensorState === "pending"
+      ? "Starting…"
+      : manualMode
+        ? cameraActive
+          ? "Camera · manual aim"
+          : "Manual aim"
+        : sensorState === "live"
+          ? cameraActive
+            ? `Live · ${sensorSource ? SOURCE_LABELS[sensorSource] : "sensors"}`
+            : `Sensors only · ${sensorSource ? SOURCE_LABELS[sensorSource] : "camera off"}`
+          : "Waiting for sensors…";
+
+  const showEmptyState = arStarted && skyTargets.length === 0;
 
   return (
     <div className="ar-page">
@@ -585,10 +824,24 @@ export function ArPage() {
         <div className="ar-sky-fallback" aria-hidden="true" />
         <div className="ar-vignette" aria-hidden="true" />
 
+        <canvas
+          ref={canvasRef}
+          className="ar-canvas"
+          style={{ width: stageSize.width, height: stageSize.height }}
+          role="img"
+          aria-label="Satellite positions and projected orbit paths"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={() => {
+            dragRef.current = null;
+          }}
+        />
+
         <header className="ar-topbar">
-          <div>
+          <div className="ar-status-pill">
             <span className={`ar-live-dot ${cameraActive ? "active" : ""}`} />
-            <span>{status}</span>
+            <span>{statusText}</span>
           </div>
           <div className="ar-top-actions">
             {arStarted ? (
@@ -613,146 +866,49 @@ export function ArPage() {
           </div>
         </header>
 
-        <div className="ar-compass" aria-hidden="true">
-          <span>{Math.round(view.headingDeg).toString().padStart(3, "0")}°</span>
-          <strong>
-            {["N", "NE", "E", "SE", "S", "SW", "W", "NW"][
-              Math.round(view.headingDeg / 45) % 8
-            ]}
-          </strong>
-        </div>
-
-        <svg
-          className="ar-overlay"
-          viewBox={`0 0 ${stageSize.width} ${stageSize.height}`}
-          role="img"
-          aria-label="Satellite positions and projected orbit paths"
-        >
-          <defs>
-            <filter id="ar-glow">
-              <feGaussianBlur stdDeviation="3" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-          <line
-            x1={stageSize.width / 2 - 18}
-            y1={stageSize.height / 2}
-            x2={stageSize.width / 2 + 18}
-            y2={stageSize.height / 2}
-            className="ar-reticle"
-          />
-          <line
-            x1={stageSize.width / 2}
-            y1={stageSize.height / 2 - 18}
-            x2={stageSize.width / 2}
-            y2={stageSize.height / 2 + 18}
-            className="ar-reticle"
-          />
-          {skyTargets.flatMap((target) =>
-            orbitSegments(
-              target.orbit,
-              view,
-              stageSize.width,
-              stageSize.height,
-              fieldOfView
-            ).map((points, index) => (
-              <polyline
-                key={`${target.satellite.id}-orbit-${index}`}
-                points={points.join(" ")}
-                fill="none"
-                stroke={target.color}
-                strokeWidth={target.satellite.id === focus?.satellite.id ? 2 : 1}
-                strokeDasharray="4 7"
-                opacity={target.satellite.id === focus?.satellite.id ? 0.85 : 0.35}
-              />
-            ))
-          )}
-          {skyTargets.map((target) => {
-            const position = projectLookAngle(
-              target.snapshot.azimuthDeg,
-              target.snapshot.elevationDeg,
-              view,
-              stageSize.width,
-              stageSize.height,
-              fieldOfView
-            );
-            if (!position.visible) {
-              return null;
-            }
-            const selected = target.satellite.id === focus?.satellite.id;
-            return (
-              <g
-                key={target.satellite.id}
-                transform={`translate(${position.x} ${position.y})`}
-                className="ar-target"
-                onClick={() => selectSatellite(target.satellite.id)}
-                role="button"
-                aria-label={`Select ${target.satellite.name}`}
-              >
-                <circle r={selected ? 19 : 11} fill="rgba(4,8,13,.62)" stroke={target.color} strokeWidth={selected ? 2 : 1} />
-                <circle r={selected ? 4 : 3} fill={target.color} filter="url(#ar-glow)" />
-                <text y={selected ? -28 : -19} textAnchor="middle" className="ar-target-name">
-                  {target.satellite.name}
-                </text>
-                <text y={selected ? 34 : 27} textAnchor="middle" className="ar-target-angle">
-                  {target.snapshot.azimuthDeg.toFixed(0)}° / {target.snapshot.elevationDeg.toFixed(0)}°
-                </text>
-              </g>
-            );
-          })}
-          {focus && dishOffset > 0 ? (() => {
-            const dishPosition = projectLookAngle(
-              focus.snapshot.azimuthDeg,
-              focusDishElevation,
-              view,
-              stageSize.width,
-              stageSize.height,
-              fieldOfView
-            );
-            if (!dishPosition.visible) {
-              return null;
-            }
-            return (
-              <g transform={`translate(${dishPosition.x} ${dishPosition.y})`} className="ar-dish-target">
-                <circle r="24" />
-                <path d="M -31 0 H -15 M 15 0 H 31 M 0 -31 V -15 M 0 15 V 31" />
-                <text y="43" textAnchor="middle">DISH FACE</text>
-              </g>
-            );
-          })() : null}
-        </svg>
-
-        {focus && focusDishElevation >= 0 && !projectLookAngle(
-          focus.snapshot.azimuthDeg,
-          dishOffset > 0 ? focusDishElevation : focus.snapshot.elevationDeg,
-          view,
-          stageSize.width,
-          stageSize.height,
-          fieldOfView
-        ).visible ? (
-          <div
-            className="ar-offscreen-cue"
-            style={{
-              // Screen space, so the arrow has to unwind the device roll.
-              transform: `translateX(-50%) rotate(${
-                (Math.atan2(azimuthError, elevationError) * 180) / Math.PI - (view.rollDeg ?? 0)
-              }deg)`
-            }}
-          >
-            ↑
+        {arStarted && manualMode ? (
+          <div className="ar-hint-chip" aria-hidden="true">
+            <Move size={13} />
+            Drag to aim
           </div>
+        ) : null}
+
+        {arStarted && debugMode ? (
+          <button
+            type="button"
+            className="ar-debug-poi"
+            aria-label="Mark a point of interest in the debug log"
+            onClick={handleMarkPoi}
+          >
+            <Flag size={15} />
+            <span>POI</span>
+          </button>
         ) : null}
 
         {!arStarted ? (
           <div className="ar-start">
-            <div className="ar-start-icon"><Camera size={28} /></div>
-            <h1>Point at the sky</h1>
-            <p>Uses your camera and motion sensors. No native AR framework, no account, no mysterious cloud ritual.</p>
+            <div className="ar-start-icon">
+              <Satellite size={28} />
+            </div>
+            <h1>Sky finder</h1>
+            <p>
+              Hold your phone up and follow the on-screen guidance to the satellites you track.
+              Camera and motion sensors stay on this device.
+            </p>
             <Button size="lg" onClick={() => void startAr()}>
-              <LocateFixed size={17} /> Start AR finder
+              <LocateFixed size={17} /> Start sky finder
+            </Button>
+            <span className="ar-start-hint">No sensors? You can drag to look around instead.</span>
+          </div>
+        ) : null}
+
+        {showEmptyState ? (
+          <div className="ar-empty">
+            <Satellite size={22} />
+            <strong>Nothing to point at yet</strong>
+            <p>Add satellites to your watchlist and they will appear in the sky here.</p>
+            <Button size="sm" variant="secondary" onClick={() => setPage("catalog")}>
+              Browse catalog
             </Button>
           </div>
         ) : null}
@@ -796,7 +952,8 @@ export function ArPage() {
               />
             </div>
             <p>
-              Satellite elevation is the signal path. Dish-face elevation subtracts the offset, which is the angle you physically set on an offset-fed dish.
+              Satellite elevation is the signal path. Dish-face elevation subtracts the offset,
+              which is the angle you physically set on an offset-fed dish.
             </p>
 
             <div className="ar-settings-heading">
@@ -819,122 +976,189 @@ export function ArPage() {
               }}
             />
             <p>
-              Measured across the long edge of the camera frame. If markers slide against the scene as you pan, nudge this until a marker stays pinned to the same spot in the room.
+              Measured across the long edge of the camera frame. If markers slide against the
+              scene as you pan, nudge this until a marker stays pinned to the same spot.
             </p>
+
+            <div className="ar-settings-heading">
+              <div>
+                <span className="label">Compass calibration</span>
+                <strong>Heading trim</strong>
+              </div>
+              <span className="mono">
+                {compassTrim > 0 ? "+" : ""}
+                {compassTrim.toFixed(1)}°
+              </span>
+            </div>
+            <div className="ar-trim-row">
+              <Slider
+                min={-MAX_COMPASS_TRIM_DEG}
+                max={MAX_COMPASS_TRIM_DEG}
+                step={0.5}
+                value={[compassTrim]}
+                aria-label="Compass heading trim"
+                onValueChange={([value]) => {
+                  const next = value ?? 0;
+                  setCompassTrim(next);
+                  localStorage.setItem(COMPASS_TRIM_KEY, String(next));
+                }}
+              />
+              <button
+                type="button"
+                className="ar-trim-reset"
+                disabled={compassTrim === 0}
+                onClick={() => {
+                  setCompassTrim(0);
+                  localStorage.setItem(COMPASS_TRIM_KEY, "0");
+                }}
+              >
+                Reset
+              </button>
+            </div>
+            <p>
+              Corrects a biased compass: point the camera at a landmark with a known bearing and
+              trim until the overlay heading matches it.
+            </p>
+
+            <div className="ar-settings-heading">
+              <div>
+                <span className="label">Troubleshooting · temporary</span>
+                <strong>Sensor debug log</strong>
+              </div>
+              <span className="mono">
+                {debugMode ? `${arDebugEntryCount().toLocaleString()} ev` : "off"}
+              </span>
+            </div>
+            <div className="ar-debug-actions">
+              <button type="button" onClick={toggleDebugMode}>
+                <Bug size={14} />
+                {debugMode ? "Disable logging" : "Enable logging"}
+              </button>
+              {debugMode ? (
+                <>
+                  <button type="button" onClick={() => void handleExportDebug()}>
+                    <Download size={14} />
+                    Export
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearArDebugLog();
+                      showToast("Debug log cleared");
+                    }}
+                  >
+                    <Trash2 size={14} />
+                    Clear
+                  </button>
+                </>
+              ) : null}
+            </div>
+            <p>
+              Records the raw sensor stream and every compass-fusion decision. Tap the floating
+              POI button the instant the view misbehaves, then export the log as JSON.
+            </p>
+
             <button
               type="button"
               className="ar-manual-toggle"
-              disabled={manualView && !sensorActive}
+              disabled={manualMode && sensorState !== "live"}
               onClick={() => {
-                setManualView((active) => !active);
+                if (manualMode) {
+                  filterRef.current.reset();
+                  ribbonHeadingFilterRef.current.reset();
+                  setManualMode(false);
+                } else {
+                  enableManualAim();
+                }
                 setShowSettings(false);
               }}
             >
               <Crosshair size={15} />
-              {manualView
-                ? sensorActive
+              {manualMode
+                ? sensorState === "live"
                   ? "Use device sensors"
                   : "Device sensors unavailable"
-                : "Manual aim / calibration"}
+                : "Manual aim (drag to look)"}
             </button>
           </aside>
         ) : null}
 
-        {manualView ? (
-          <div className="ar-manual-controls">
-            <label>
-              <span>Heading</span>
-              <input
-                type="range"
-                min="0"
-                max="359"
-                value={view.headingDeg}
-                onChange={(event) => applyView({ ...viewRef.current, headingDeg: Number(event.target.value) })}
-              />
-            </label>
-            <label>
-              <span>Elevation</span>
-              <input
-                type="range"
-                min="-90"
-                max="90"
-                value={view.elevationDeg}
-                onChange={(event) => applyView({ ...viewRef.current, elevationDeg: Number(event.target.value) })}
-              />
-            </label>
-          </div>
-        ) : null}
-
-        {arStarted ? (
-          <div className="ar-readout">
+        {arStarted && skyTargets.length > 0 ? (
+          <div className="ar-hud">
             {toast ? (
               <div className="ar-toast" role="status" aria-live="polite">
                 <BellRing size={15} />
                 <span>{toast}</span>
               </div>
             ) : null}
-            <div className="ar-selected">
-              <span className="ar-selected-icon" style={{ color: focus?.color }}>
-                <Orbit size={19} />
-              </span>
-              <div>
-                <span>TRACKING</span>
-                {focus && skyTargets.length > 1 ? (
-                  <select
-                    className="ar-satellite-select"
-                    value={focus.satellite.id}
-                    aria-label="Tracked satellite"
-                    onChange={(event) => selectSatellite(event.target.value)}
+
+            <div className="ar-chips" role="listbox" aria-label="Tracked satellites">
+              {skyTargets.map((target) => {
+                const selected = target.satellite.id === focus?.satellite.id;
+                const aboveHorizon = target.snapshot.elevationDeg > 0;
+                return (
+                  <button
+                    key={target.satellite.id}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    className={`ar-chip ${selected ? "selected" : ""}`}
+                    style={{ "--chip-color": target.color } as React.CSSProperties}
+                    onClick={() => selectSatellite(target.satellite.id)}
                   >
-                    {skyTargets.map((target) => (
-                      <option key={target.satellite.id} value={target.satellite.id}>
-                        {target.satellite.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <strong>{focus?.satellite.name ?? "No satellite selected"}</strong>
-                )}
-              </div>
+                    <span className="ar-chip-dot" />
+                    <span className="ar-chip-name">{target.satellite.name}</span>
+                    <span className={`ar-chip-el ${aboveHorizon ? "up" : ""}`}>
+                      {aboveHorizon ? "▲" : "▽"} {Math.abs(target.snapshot.elevationDeg).toFixed(0)}°
+                    </span>
+                  </button>
+                );
+              })}
             </div>
+
             {focus ? (
-              <>
-                <div className="ar-angles">
-                  <div><span>AZ</span><strong>{focus.snapshot.azimuthDeg.toFixed(1)}°</strong></div>
-                  <div><span>SAT EL</span><strong>{focus.snapshot.elevationDeg.toFixed(1)}°</strong></div>
-                  <div className={dishOffset > 0 ? "accent" : ""}>
-                    <span>DISH FACE</span><strong>{focusDishElevation.toFixed(1)}°</strong>
+              <div className="ar-hud-card">
+                <div className="ar-stats">
+                  <div>
+                    <span>AZ</span>
+                    <strong ref={hudAzRef}>—</strong>
                   </div>
+                  <div>
+                    <span>EL</span>
+                    <strong ref={hudElRef}>—</strong>
+                  </div>
+                  <div>
+                    <span>RANGE</span>
+                    <strong ref={hudRangeRef}>—</strong>
+                  </div>
+                  {dishOffset > 0 ? (
+                    <div className="accent">
+                      <span>DISH</span>
+                      <strong ref={hudDishRef}>—</strong>
+                    </div>
+                  ) : null}
                 </div>
-                {focus.snapshot.elevationDeg > 0 ? (
-                  <div className="ar-guidance">
-                    Turn {Math.abs(azimuthError).toFixed(1)}° {azimuthError < 0 ? "left" : "right"}
-                    <span>·</span>
-                    Aim {Math.abs(elevationError).toFixed(1)}° {elevationError < 0 ? "down" : "up"}
+                <div ref={hudGuidanceRef} className="ar-guidance" data-state="seeking">
+                  Looking for {focus.satellite.name}…
+                </div>
+                <div className="ar-next-pass">
+                  <div>
+                    <span>NEXT LOOK WINDOW</span>
+                    <strong>{nextPass ? formatTimestamp(nextPass.aos) : "No pass in 7 days"}</strong>
+                    {nextPass ? <small>Peaks at {nextPass.maxElevationDeg.toFixed(0)}°</small> : null}
                   </div>
-                ) : (
-                  <div className="ar-guidance below-horizon">
-                    Below the horizon · wait for the next look window
-                  </div>
-                )}
-              </>
-            ) : null}
-            <div className="ar-next-pass">
-              <div>
-                <span>NEXT LOOK WINDOW</span>
-                <strong>{nextPass ? formatTimestamp(nextPass.aos) : "No pass in 7 days"}</strong>
-                {nextPass ? <small>Peaks at {nextPass.maxElevationDeg.toFixed(0)}°</small> : null}
+                  <Button
+                    size="sm"
+                    variant={reminderSet ? "default" : "secondary"}
+                    disabled={!nextPass}
+                    onClick={() => void toggleReminder()}
+                  >
+                    {reminderSet ? <BellRing size={15} /> : <Bell size={15} />}
+                    {reminderSet ? "Alert set" : "Notify"}
+                  </Button>
+                </div>
               </div>
-              <Button
-                size="sm"
-                variant={reminderSet ? "default" : "secondary"}
-                disabled={!nextPass}
-                onClick={() => void toggleReminder()}
-              >
-                {reminderSet ? <BellRing size={15} /> : <Bell size={15} />}
-                {reminderSet ? "Alert set" : "Notify"}
-              </Button>
-            </div>
+            ) : null}
           </div>
         ) : null}
       </section>
