@@ -1,15 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
+  OrientationFilter,
+  applyHeadingTrim,
   directionFromOrientation,
   dishFaceElevation,
-  interpolateViewDirection,
-  orientationSmoothingFactor,
+  interpolateLookAngles,
+  offAxisAngleDeg,
   projectLookAngle,
+  quaternionFromSample,
+  quaternionFromView,
+  quatSlerp,
   selectNextLookPass,
-  shouldAcceptOrientationSource,
+  shouldAcceptOrientationSample,
   signedAngleDifference,
   stageFieldOfView,
-  viewBasis
+  viewBasis,
+  viewFromQuaternion,
+  type Quaternion,
+  type ViewDirection
 } from "../ar";
 
 describe("AR pointing math", () => {
@@ -75,63 +83,70 @@ describe("AR pointing math", () => {
     expect(dot(basis.right, basis.up)).toBeCloseTo(0);
   });
 
-  it("smooths across north using the short circular path", () => {
-    const result = interpolateViewDirection(
-      { headingDeg: 359, elevationDeg: 0 },
-      { headingDeg: 1, elevationDeg: 20 },
-      0.25
-    );
-
-    expect(result.headingDeg).toBeCloseTo(359.5);
-    expect(result.elevationDeg).toBe(5);
+  it("round-trips a view through its quaternion", () => {
+    const poses: ViewDirection[] = [
+      { headingDeg: 0, elevationDeg: 0, rollDeg: 0 },
+      { headingDeg: 137.5, elevationDeg: 42, rollDeg: 12 },
+      { headingDeg: 300, elevationDeg: -35, rollDeg: 351 },
+      { headingDeg: 89, elevationDeg: 78, rollDeg: 180 }
+    ];
+    for (const pose of poses) {
+      const roundTripped = viewFromQuaternion(quaternionFromView(pose));
+      expect(roundTripped.headingDeg).toBeCloseTo(pose.headingDeg, 5);
+      expect(roundTripped.elevationDeg).toBeCloseTo(pose.elevationDeg, 5);
+      expect(roundTripped.rollDeg).toBeCloseTo(pose.rollDeg ?? 0, 5);
+    }
   });
 
-  it("uses frame time to keep smoothing consistent across refresh rates", () => {
-    expect(orientationSmoothingFactor(0)).toBe(0);
-    expect(orientationSmoothingFactor(110, 110)).toBeCloseTo(1 - Math.exp(-1));
-    expect(orientationSmoothingFactor(1000)).toBeGreaterThan(0.99);
+  it("swings the heading clockwise for a positive compass trim", () => {
+    const q = quaternionFromView({ headingDeg: 100, elevationDeg: 25, rollDeg: 5 });
+    const trimmed = viewFromQuaternion(applyHeadingTrim(q, 7.5));
+
+    expect(trimmed.headingDeg).toBeCloseTo(107.5, 5);
+    expect(trimmed.elevationDeg).toBeCloseTo(25, 5);
+    expect(trimmed.rollDeg).toBeCloseTo(5, 5);
   });
 
-  it("closes 90% of the gap within 100ms at any frame rate", () => {
-    const remainingAfter = (frameMs: number, totalMs: number) => {
-      let remaining = 1;
-      for (let elapsed = 0; elapsed < totalMs; elapsed += frameMs) {
-        remaining *= 1 - orientationSmoothingFactor(frameMs);
-      }
-      return remaining;
-    };
+  it("slerps across north on the short arc", () => {
+    const a = quaternionFromView({ headingDeg: 350, elevationDeg: 0, rollDeg: 0 });
+    const b = quaternionFromView({ headingDeg: 10, elevationDeg: 0, rollDeg: 0 });
+    const mid = viewFromQuaternion(quatSlerp(a, b, 0.5));
 
-    // The old 110ms response left ~40% of the gap outstanding at this point,
-    // which is the tail that read as the overlay trailing the camera.
-    expect(remainingAfter(1000 / 60, 100)).toBeLessThan(0.1);
-    expect(remainingAfter(1000 / 30, 100)).toBeLessThan(0.1);
-    expect(remainingAfter(1000 / 60, 100)).toBeCloseTo(remainingAfter(1000 / 30, 100), 1);
+    expect(mid.headingDeg).toBeCloseTo(0, 4);
+    expect(mid.elevationDeg).toBeCloseTo(0, 4);
   });
 
-  it("returns the same object once it has caught up, so renders can stop", () => {
-    const target = { headingDeg: 159, elevationDeg: -23, rollDeg: 4 };
-    let current = { headingDeg: 158.99, elevationDeg: -23, rollDeg: 4 };
-
-    // First call snaps exactly onto the target.
-    const snapped = interpolateViewDirection(current, target, 0.5);
-    expect(snapped).not.toBe(current);
-    expect(snapped.headingDeg).toBe(159);
-
-    // Every later call hands back the identical reference.
-    current = snapped as typeof current;
-    expect(interpolateViewDirection(current, target, 0.5)).toBe(current);
+  it("measures the boresight-to-target separation", () => {
+    const view: ViewDirection = { headingDeg: 180, elevationDeg: 20 };
+    expect(offAxisAngleDeg(view, 180, 20)).toBeCloseTo(0);
+    expect(offAxisAngleDeg(view, 180, 50)).toBeCloseTo(30);
   });
 
-  it("does not let a relative orientation stream override an absolute compass", () => {
-    expect(shouldAcceptOrientationSource("absolute", "relative")).toBe(false);
-    expect(shouldAcceptOrientationSource("absolute", "absolute")).toBe(true);
-    expect(shouldAcceptOrientationSource("relative", "absolute")).toBe(true);
-    expect(shouldAcceptOrientationSource(null, "relative")).toBe(true);
-    expect(shouldAcceptOrientationSource("absolute", "relative", 1200)).toBe(true);
+  it("prefers better orientation sources and only degrades once stale", () => {
+    expect(shouldAcceptOrientationSample(null, "relative")).toBe(true);
+    expect(shouldAcceptOrientationSample("absolute", "fused")).toBe(true);
+    expect(shouldAcceptOrientationSample("fused", "absolute", 200)).toBe(false);
+    expect(shouldAcceptOrientationSample("absolute", "relative", 200)).toBe(false);
+    expect(shouldAcceptOrientationSample("absolute", "relative", 2000)).toBe(true);
+    expect(shouldAcceptOrientationSample("fused", "fused")).toBe(true);
   });
 
   it("subtracts an offset dish angle from the boresight elevation", () => {
     expect(dishFaceElevation(42, 22.5)).toBe(19.5);
+  });
+
+  it("interpolates satellite look angles on the sphere", () => {
+    const mid = interpolateLookAngles(
+      { azimuthDeg: 350, elevationDeg: 10, rangeKm: 1000 },
+      { azimuthDeg: 10, elevationDeg: 20, rangeKm: 1200 },
+      0.5
+    );
+
+    // Across north the short way, not the 340-degree detour.
+    expect(Math.abs(signedAngleDifference(mid.azimuthDeg, 0))).toBeLessThan(0.5);
+    expect(mid.elevationDeg).toBeGreaterThan(10);
+    expect(mid.elevationDeg).toBeLessThan(20);
+    expect(mid.rangeKm).toBeCloseTo(1100);
   });
 
   it("projects a centered target to the viewport center", () => {
@@ -199,5 +214,83 @@ describe("AR pointing math", () => {
     expect(selectNextLookPass([inProgress, upcoming], now)).toBe(upcoming);
     expect(selectNextLookPass([inProgress], now)).toBeNull();
     expect(selectNextLookPass([upcoming], now)).toBe(upcoming);
+  });
+});
+
+describe("orientation filter", () => {
+  const pose = (headingDeg: number): Quaternion =>
+    quaternionFromView({ headingDeg, elevationDeg: 0, rollDeg: 0 });
+
+  it("snaps to the first fix instead of easing in from north", () => {
+    const filter = new OrientationFilter();
+    const out = viewFromQuaternion(filter.update(pose(213), 0));
+    expect(out.headingDeg).toBeCloseTo(213, 5);
+  });
+
+  it("settles onto a static target", () => {
+    const filter = new OrientationFilter();
+    filter.update(pose(0), 0);
+    let latest = pose(0);
+    for (let frame = 1; frame <= 60; frame += 1) {
+      latest = filter.update(pose(20), frame * (1000 / 60));
+    }
+    expect(viewFromQuaternion(latest).headingDeg).toBeCloseTo(20, 1);
+  });
+
+  it("tracks a fast pan almost without lag", () => {
+    // 180 deg/s sweep at 60 fps: the adaptive cutoff must open up so the
+    // overlay stays pinned to the camera; a fixed low-pass would trail by
+    // tens of degrees, which is the "half a second behind" complaint.
+    const filter = new OrientationFilter();
+    const frameMs = 1000 / 60;
+    let filtered = filter.update(pose(0), 0);
+    let heading = 0;
+    for (let frame = 1; frame <= 120; frame += 1) {
+      heading = (frame * frameMs * 0.18) % 360; // 180 deg/s
+      filtered = filter.update(pose(heading), frame * frameMs);
+    }
+    const lag = Math.abs(
+      signedAngleDifference(heading, viewFromQuaternion(filtered).headingDeg)
+    );
+    expect(lag).toBeLessThan(4);
+  });
+
+  it("suppresses sensor jitter while holding still", () => {
+    const filter = new OrientationFilter();
+    const frameMs = 1000 / 60;
+    filter.update(pose(90), 0);
+    let minHeading = 90;
+    let maxHeading = 90;
+    const noiseAmplitude = 0.6;
+    for (let frame = 1; frame <= 240; frame += 1) {
+      // Alternating compass noise around a fixed pose - the worst case for an
+      // adaptive filter, since jitter masquerades as fast motion.
+      const noisy = 90 + (frame % 2 === 0 ? noiseAmplitude : -noiseAmplitude);
+      const out = viewFromQuaternion(filter.update(pose(noisy), frame * frameMs));
+      if (frame > 60) {
+        minHeading = Math.min(minHeading, out.headingDeg);
+        maxHeading = Math.max(maxHeading, out.headingDeg);
+      }
+    }
+    // The raw stream wobbles across the full 2x amplitude; the filtered one
+    // must be at least three times steadier even in this pathological case.
+    expect(maxHeading - minHeading).toBeLessThan((2 * noiseAmplitude) / 3);
+  });
+});
+
+describe("orientation samples", () => {
+  it("produces unit quaternions for arbitrary event angles", () => {
+    const q = quaternionFromSample({ alpha: 300, beta: 65, gamma: -20, screenAngleDeg: 90 });
+    expect(q).not.toBeNull();
+    const { x, y, z, w } = q as Quaternion;
+    expect(Math.hypot(x, y, z, w)).toBeCloseTo(1, 9);
+  });
+
+  it("keeps the flat-on-a-table pose pointing straight down for the rear camera", () => {
+    // Identity orientation: device flat, screen up. The rear camera looks at
+    // the floor, so elevation must be -90 regardless of screen rotation.
+    const q = quaternionFromSample({ alpha: 0, beta: 0, gamma: 0, screenAngleDeg: 90 });
+    const view = viewFromQuaternion(q as Quaternion);
+    expect(view.elevationDeg).toBeCloseTo(-90, 5);
   });
 });
