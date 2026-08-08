@@ -2,13 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   BellRing,
+  Bug,
   Camera,
   CameraOff,
   Crosshair,
+  Download,
+  Flag,
   LocateFixed,
   Move,
   Satellite,
-  Settings2
+  Settings2,
+  Trash2
 } from "lucide-react";
 import { computeOrbitSnapshot } from "@/shared/propagation/engine";
 import { predictPassesBulk } from "@/shared/passes/predictor";
@@ -39,6 +43,15 @@ import {
   type ViewDirection
 } from "../lib/ar";
 import { startOrientationStream } from "../lib/arSensors";
+import {
+  arDebugEntryCount,
+  arDebugPoi,
+  arDebugSample,
+  clearArDebugLog,
+  exportArDebugLog,
+  isArDebugEnabled,
+  setArDebugEnabled
+} from "../lib/arDebug";
 import { renderArScene, type ArHitRegion, type ArSceneTarget } from "../lib/arRender";
 import {
   hasPassReminder,
@@ -179,6 +192,7 @@ export function ArPage() {
   const [compassTrim, setCompassTrim] = useState(() =>
     readStoredNumber(COMPASS_TRIM_KEY, 0, -MAX_COMPASS_TRIM_DEG, MAX_COMPASS_TRIM_DEG)
   );
+  const [debugMode, setDebugMode] = useState(isArDebugEnabled);
   const [, setReminderRevision] = useState(0);
 
   const fieldOfView = useMemo(
@@ -484,6 +498,17 @@ export function ArPage() {
     }
     lastHudUpdateRef.current = frameTimeMs;
 
+    if (isArDebugEnabled()) {
+      // What the user actually sees, to correlate against the sensor entries.
+      arDebugSample("view", 400, {
+        h: Math.round(view.headingDeg * 10) / 10,
+        el: Math.round(view.elevationDeg * 10) / 10,
+        ribbon: Math.round(ribbonHeadingDeg * 10) / 10,
+        src: sensorSourceRef.current,
+        manual: useManual
+      });
+    }
+
     if (focusTarget) {
       if (hudAzRef.current) {
         hudAzRef.current.textContent = `${focusTarget.azimuthDeg.toFixed(1)}°`;
@@ -633,6 +658,31 @@ export function ArPage() {
       setToast(null);
       toastTimerRef.current = null;
     }, 2600);
+  }
+
+  function handleMarkPoi() {
+    const n = arDebugPoi();
+    showToast(`POI #${n} marked in debug log`);
+  }
+
+  async function handleExportDebug() {
+    const result = await exportArDebugLog();
+    showToast(
+      result === "empty"
+        ? "Debug log is empty"
+        : result === "cancelled"
+          ? "Export cancelled"
+          : result === "shared"
+            ? "Debug log shared"
+            : "Debug log downloaded"
+    );
+  }
+
+  function toggleDebugMode() {
+    const next = !debugMode;
+    setArDebugEnabled(next);
+    setDebugMode(next);
+    showToast(next ? "Debug logging on — mark POIs when it misbehaves" : "Debug logging off");
   }
 
   function enableManualAim() {
@@ -823,6 +873,18 @@ export function ArPage() {
           </div>
         ) : null}
 
+        {arStarted && debugMode ? (
+          <button
+            type="button"
+            className="ar-debug-poi"
+            aria-label="Mark a point of interest in the debug log"
+            onClick={handleMarkPoi}
+          >
+            <Flag size={15} />
+            <span>POI</span>
+          </button>
+        ) : null}
+
         {!arStarted ? (
           <div className="ar-start">
             <div className="ar-start-icon">
@@ -956,6 +1018,44 @@ export function ArPage() {
             <p>
               Corrects a biased compass: point the camera at a landmark with a known bearing and
               trim until the overlay heading matches it.
+            </p>
+
+            <div className="ar-settings-heading">
+              <div>
+                <span className="label">Troubleshooting · temporary</span>
+                <strong>Sensor debug log</strong>
+              </div>
+              <span className="mono">
+                {debugMode ? `${arDebugEntryCount().toLocaleString()} ev` : "off"}
+              </span>
+            </div>
+            <div className="ar-debug-actions">
+              <button type="button" onClick={toggleDebugMode}>
+                <Bug size={14} />
+                {debugMode ? "Disable logging" : "Enable logging"}
+              </button>
+              {debugMode ? (
+                <>
+                  <button type="button" onClick={() => void handleExportDebug()}>
+                    <Download size={14} />
+                    Export
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearArDebugLog();
+                      showToast("Debug log cleared");
+                    }}
+                  >
+                    <Trash2 size={14} />
+                    Clear
+                  </button>
+                </>
+              ) : null}
+            </div>
+            <p>
+              Records the raw sensor stream and every compass-fusion decision. Tap the floating
+              POI button the instant the view misbehaves, then export the log as JSON.
             </p>
 
             <button

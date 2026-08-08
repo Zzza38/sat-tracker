@@ -1022,6 +1022,52 @@ button.ar-trim-reset:disabled:not([data-slot]) {
   opacity: 0.4;
 }
 
+/* Temporary sensor-debug controls (see lib/arDebug.ts). */
+.ar-debug-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+}
+
+.ar-debug-actions button:not([data-slot]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgba(255, 178, 102, 0.35);
+  border-radius: 999px;
+  background: rgba(46, 30, 10, 0.55);
+  color: #ffd98c;
+  padding: 0.34rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+button.ar-debug-poi:not([data-slot]) {
+  position: absolute;
+  z-index: 6;
+  top: 50%;
+  right: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  transform: translateY(-50%);
+  border: 1px solid rgba(255, 178, 102, 0.55);
+  border-radius: 999px;
+  background: rgba(46, 30, 10, 0.72);
+  color: #ffd98c;
+  padding: 0.7rem 0.95rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(10px);
+  touch-action: manipulation;
+}
+
+button.ar-debug-poi:not([data-slot]):active {
+  background: rgba(255, 178, 102, 0.35);
+}
+
 /* Bottom HUD: satellite chips above a glass readout card. */
 .ar-hud {
   position: absolute;

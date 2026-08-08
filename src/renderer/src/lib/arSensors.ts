@@ -7,9 +7,11 @@ import {
   quatSlerp,
   quaternionFromSample,
   shouldAcceptOrientationSample,
+  viewFromQuaternion,
   type OrientationSource,
   type Quaternion
 } from "./ar";
+import { arDebugLog, arDebugSample, isArDebugEnabled } from "./arDebug";
 
 /**
  * Single stream of world-frame orientation quaternions, picking the best
@@ -75,6 +77,11 @@ const MAX_SPEED_SAMPLE_GAP_S = 0.5;
 /** Compass fixes with worse reported uncertainty than this are discarded. */
 const MAX_COMPASS_ACCURACY_DEG = 50;
 
+const round1 = (value: number) => Math.round(value * 10) / 10;
+/** Heading a quaternion points at, for the debug log only. */
+const debugHeading = (quaternion: Quaternion) =>
+  round1(viewFromQuaternion(quaternion).headingDeg);
+
 /**
  * Complementary filter joining the two W3C orientation streams: gyro-relative
  * orientation for responsiveness, compass for absolute reference. The
@@ -121,6 +128,7 @@ export class CompassGyroFusion {
       accuracyDeg !== undefined &&
       (accuracyDeg < 0 || accuracyDeg > MAX_COMPASS_ACCURACY_DEG)
     ) {
+      arDebugSample("anchor-reject-accuracy", 1000, { acc: accuracyDeg });
       return;
     }
     const target = quatNormalize(quatMultiply(quaternion, quatConjugate(this.relative)));
@@ -128,6 +136,13 @@ export class CompassGyroFusion {
     if (this.correction === null || this.lastCorrectionAtMs === null) {
       this.correction = target;
       this.lastCorrectionAtMs = timestampMs;
+      if (isArDebugEnabled()) {
+        arDebugLog("anchor-init", {
+          relH: debugHeading(this.relative),
+          absH: debugHeading(quaternion),
+          acc: accuracyDeg
+        });
+      }
       return;
     }
 
@@ -137,6 +152,7 @@ export class CompassGyroFusion {
     if (this.speedDegPerSec > ANCHOR_MAX_SPEED_DEG_PER_SEC) {
       this.lastCorrectionAtMs = timestampMs;
       this.largeDeltaSinceMs = null;
+      arDebugSample("anchor-hold-motion", 1000, { speed: round1(this.speedDegPerSec) });
       return;
     }
 
@@ -157,6 +173,17 @@ export class CompassGyroFusion {
       } else if (timestampMs - this.largeDeltaSinceMs > CORRECTION_SNAP_AFTER_MS) {
         this.correction = target;
         this.largeDeltaSinceMs = null;
+        // The prime suspect for a sudden random flip mid-session: log every
+        // snap unthrottled, with both sides of the disagreement.
+        if (isArDebugEnabled()) {
+          arDebugLog("anchor-snap", {
+            deltaDeg: round1(deltaDeg),
+            relH: debugHeading(this.relative),
+            absH: debugHeading(quaternion),
+            acc: accuracyDeg,
+            speed: round1(this.speedDegPerSec)
+          });
+        }
         return;
       }
     } else {
@@ -166,6 +193,22 @@ export class CompassGyroFusion {
     const lowPassStepDeg = deltaDeg * lowPassAlpha(CORRECTION_CUTOFF_HZ, deltaSeconds);
     const stepDeg = Math.min(lowPassStepDeg, CORRECTION_MAX_SLEW_DEG_PER_SEC * deltaSeconds);
     this.correction = quatSlerp(this.correction, target, stepDeg / deltaDeg);
+    if (isArDebugEnabled()) {
+      // "anchor" traces the slow shift; "anchor-large" catches the run-up to
+      // a snap (disagreement above 20°) at a faster cadence.
+      const data = {
+        deltaDeg: round1(deltaDeg),
+        stepDeg: Math.round(stepDeg * 1000) / 1000,
+        relH: debugHeading(this.relative),
+        absH: debugHeading(quaternion),
+        acc: accuracyDeg,
+        speed: round1(this.speedDegPerSec)
+      };
+      arDebugSample("anchor", 500, data);
+      if (deltaDeg > 20) {
+        arDebugSample("anchor-large", 250, data);
+      }
+    }
   }
 
   /** Best current orientation, or null when no usable relative sample exists. */
@@ -210,6 +253,9 @@ export function startOrientationStream(onSample: OrientationSampleHandler): () =
     if (!shouldAcceptOrientationSample(activeSource, source, now - lastActiveAt)) {
       return;
     }
+    if (activeSource !== source) {
+      arDebugLog("source-switch", { from: activeSource, to: source });
+    }
     activeSource = source;
     lastActiveAt = now;
     onSample(quaternion, source);
@@ -237,6 +283,7 @@ export function startOrientationStream(onSample: OrientationSampleHandler): () =
       // No hardware / permission-policy denial surfaces here; the event
       // listeners below simply keep serving as the fallback.
       sensor.addEventListener("error", () => {
+        arDebugLog("fused-sensor-error");
         try {
           sensor.stop();
         } catch {
@@ -274,6 +321,21 @@ export function startOrientationStream(onSample: OrientationSampleHandler): () =
     const screenAngleDeg = readScreenAngle();
     const hasCompassHeading = compassEvent.webkitCompassHeading !== undefined;
     const isAbsolute = eventSource === "absolute" || event.absolute || hasCompassHeading;
+
+    if (isArDebugEnabled()) {
+      arDebugSample(`raw-${eventSource}`, 250, {
+        a: event.alpha === null ? null : round1(event.alpha),
+        b: event.beta === null ? null : round1(event.beta),
+        g: event.gamma === null ? null : round1(event.gamma),
+        compass:
+          compassEvent.webkitCompassHeading === undefined
+            ? undefined
+            : round1(compassEvent.webkitCompassHeading),
+        acc: compassEvent.webkitCompassAccuracy,
+        abs: event.absolute,
+        screen: screenAngleDeg
+      });
+    }
 
     if (!isAbsolute) {
       const relative = quaternionFromSample({
