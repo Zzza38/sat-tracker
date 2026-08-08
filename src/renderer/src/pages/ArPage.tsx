@@ -19,6 +19,7 @@ import { useTicker } from "../hooks/useTicker";
 import { Button } from "../components/ui/button";
 import { Slider } from "../components/ui/slider";
 import {
+  AngleFilter,
   DEFAULT_CAMERA_FOV_DEG,
   MAX_CAMERA_FOV_DEG,
   MAX_COMPASS_TRIM_DEG,
@@ -145,6 +146,7 @@ export function ArPage() {
   const sensorTimeoutRef = useRef<number | null>(null);
 
   const filterRef = useRef(new OrientationFilter());
+  const ribbonHeadingFilterRef = useRef(new AngleFilter());
   const sensorSampleRef = useRef<{ q: Quaternion; source: OrientationSource } | null>(null);
   const sensorSourceRef = useRef<OrientationSource | null>(null);
   const manualViewRef = useRef<ViewDirection>({ headingDeg: 0, elevationDeg: 24, rollDeg: 0 });
@@ -409,6 +411,15 @@ export function ArPage() {
     const view = viewFromQuaternion(filtered);
     viewRef.current = view;
 
+    // The ribbon heading gets its own smoothing, scaled by cos(elevation):
+    // pointing the camera up amplifies heading wobble by 1/cos(elevation), so
+    // the readout is damped harder exactly when the geometry misbehaves.
+    const ribbonHeadingDeg = ribbonHeadingFilterRef.current.update(
+      view.headingDeg,
+      frameTimeMs,
+      Math.abs(Math.cos(view.elevationDeg * DEG))
+    );
+
     // Satellites: blend the two 1 Hz propagation samples up to display rate.
     const blend = (Date.now() - state.liveSky.epochMs) / SNAPSHOT_SPAN_MS;
     const sceneTargets: ArSceneTarget[] = state.liveSky.targets.map((target) => {
@@ -462,6 +473,7 @@ export function ArPage() {
             }
           : null,
       guidanceTarget,
+      ribbonHeadingDeg,
       timeMs: frameTimeMs
     });
     hitRegionsRef.current = result.hits;
@@ -627,6 +639,7 @@ export function ArPage() {
     // Seamless hand-off: keep looking where the sensors left the view.
     manualViewRef.current = { ...viewRef.current, rollDeg: 0 };
     filterRef.current.reset();
+    ribbonHeadingFilterRef.current.reset();
     setManualMode(true);
   }
 
@@ -677,6 +690,7 @@ export function ArPage() {
         if (sensorSampleRef.current === null) {
           // First fix: snap straight there instead of easing in from north.
           filterRef.current.reset();
+          ribbonHeadingFilterRef.current.reset();
           setSensorState("live");
           setManualMode(false);
         }
@@ -951,6 +965,7 @@ export function ArPage() {
               onClick={() => {
                 if (manualMode) {
                   filterRef.current.reset();
+                  ribbonHeadingFilterRef.current.reset();
                   setManualMode(false);
                 } else {
                   enableManualAim();

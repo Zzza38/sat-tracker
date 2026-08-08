@@ -42,6 +42,12 @@ export interface ArScene {
   dishTarget: LookAngles | null;
   /** The point the user should centre; drives the reticle lock + edge cue. */
   guidanceTarget: LookAngles | null;
+  /**
+   * Separately-stabilised heading for the compass ribbon. The boresight
+   * heading swings wildly when the camera is pitched up (1/cos(elevation)
+   * amplification), so the readout gets its own heavier smoothing.
+   */
+  ribbonHeadingDeg?: number;
   timeMs: number;
 }
 
@@ -268,23 +274,52 @@ function drawOrbits(
 
     if (target.selected) {
       // Minute marks along the selected trail, labelled every ten minutes,
-      // so "where will it be" reads directly off the sky.
-      ctx.setLineDash([]);
-      ctx.font = `600 9px ${MONO_FONT}`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
+      // so "where will it be" reads directly off the sky. Slow movers (a
+      // geostationary trail collapses to a point) would pile every label onto
+      // the same spot, so marks keep a minimum screen distance from the
+      // previous one and vanish entirely for a degenerate trail.
+      let minX = Number.POSITIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
       for (const segment of segments) {
         for (const point of segment) {
-          if (point.index === 0 || point.index % 5 !== 0) {
-            continue;
-          }
-          ctx.globalAlpha = 0.9;
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, point.index % 10 === 0 ? 2.4 : 1.4, 0, Math.PI * 2);
-          ctx.fillStyle = target.color;
-          ctx.fill();
-          if (point.index % 10 === 0) {
-            haloText(ctx, `+${point.index}m`, point.x, point.y - 11, "rgba(234, 245, 252, 0.85)");
+          minX = Math.min(minX, point.x);
+          minY = Math.min(minY, point.y);
+          maxX = Math.max(maxX, point.x);
+          maxY = Math.max(maxY, point.y);
+        }
+      }
+      const trailSpan = Math.hypot(maxX - minX, maxY - minY);
+
+      if (trailSpan >= 60) {
+        ctx.setLineDash([]);
+        ctx.font = `600 9px ${MONO_FONT}`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        let lastDot: { x: number; y: number } | null = null;
+        let lastLabel: { x: number; y: number } | null = null;
+        for (const segment of segments) {
+          for (const point of segment) {
+            if (point.index === 0 || point.index % 5 !== 0) {
+              continue;
+            }
+            if (lastDot && Math.hypot(point.x - lastDot.x, point.y - lastDot.y) < 10) {
+              continue;
+            }
+            ctx.globalAlpha = 0.9;
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, point.index % 10 === 0 ? 2.4 : 1.4, 0, Math.PI * 2);
+            ctx.fillStyle = target.color;
+            ctx.fill();
+            lastDot = point;
+            if (
+              point.index % 10 === 0 &&
+              (!lastLabel || Math.hypot(point.x - lastLabel.x, point.y - lastLabel.y) >= 28)
+            ) {
+              haloText(ctx, `+${point.index}m`, point.x, point.y - 11, "rgba(234, 245, 252, 0.85)");
+              lastLabel = point;
+            }
           }
         }
       }
@@ -459,7 +494,8 @@ function drawReticle(
 // --- Compass ribbon -------------------------------------------------------------
 
 function drawCompassRibbon(ctx: CanvasRenderingContext2D, scene: ArScene) {
-  const { width, view, targets } = scene;
+  const { width, targets } = scene;
+  const heading = scene.ribbonHeadingDeg ?? scene.view.headingDeg;
   const cx = width / 2;
   const baseline = 78;
   const halfWidth = Math.min(width * 0.42, 250);
@@ -473,22 +509,22 @@ function drawCompassRibbon(ctx: CanvasRenderingContext2D, scene: ArScene) {
   ctx.font = `600 17px ${MONO_FONT}`;
   haloText(
     ctx,
-    `${Math.round(normalizeDegrees(view.headingDeg)).toString().padStart(3, "0")}°`,
+    `${Math.round(normalizeDegrees(heading)).toString().padStart(3, "0")}°`,
     cx,
     baseline - 36,
     "#f4fafd",
     4
   );
   ctx.font = `600 10px ${MONO_FONT}`;
-  haloText(ctx, cardinalLabel(view.headingDeg), cx, baseline - 20, "rgba(226, 240, 248, 0.75)");
+  haloText(ctx, cardinalLabel(heading), cx, baseline - 20, "rgba(226, 240, 248, 0.75)");
 
   const edgeFade = (dx: number) => Math.max(0, 1 - (Math.abs(dx) / halfWidth) ** 2);
 
   // Tick tape.
-  const startAz = Math.ceil((view.headingDeg - halfWidth / pxPerDeg) / 5) * 5;
-  const endAz = view.headingDeg + halfWidth / pxPerDeg;
+  const startAz = Math.ceil((heading - halfWidth / pxPerDeg) / 5) * 5;
+  const endAz = heading + halfWidth / pxPerDeg;
   for (let az = startAz; az <= endAz; az += 5) {
-    const dx = signedAngleDifference(az, view.headingDeg) * pxPerDeg;
+    const dx = signedAngleDifference(az, heading) * pxPerDeg;
     const fade = edgeFade(dx);
     if (fade <= 0.02) {
       continue;
@@ -513,7 +549,7 @@ function drawCompassRibbon(ctx: CanvasRenderingContext2D, scene: ArScene) {
 
   // Satellite pips under the tape; pinned to the edges when out of range.
   for (const target of targets) {
-    const diff = signedAngleDifference(target.azimuthDeg, view.headingDeg);
+    const diff = signedAngleDifference(target.azimuthDeg, heading);
     const dx = Math.max(-halfWidth - 8, Math.min(halfWidth + 8, diff * pxPerDeg));
     const pinned = Math.abs(diff * pxPerDeg) > halfWidth + 8;
     const y = baseline + (target.selected ? 20 : 19);

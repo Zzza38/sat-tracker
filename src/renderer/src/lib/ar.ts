@@ -117,6 +117,11 @@ export function quatMultiply(a: Quaternion, b: Quaternion): Quaternion {
   };
 }
 
+/** Inverse rotation, for unit quaternions. */
+export function quatConjugate(q: Quaternion): Quaternion {
+  return { x: -q.x, y: -q.y, z: -q.z, w: q.w };
+}
+
 export function quatNormalize(q: Quaternion): Quaternion {
   const length = Math.hypot(q.x, q.y, q.z, q.w);
   if (length < 1e-12) {
@@ -322,35 +327,50 @@ export function applyHeadingTrim(q: Quaternion, trimDeg: number): Quaternion {
 }
 
 export interface OrientationFilterOptions {
-  /** Cutoff while stationary; lower = steadier but slower to settle. */
+  /**
+   * Fixed pre-smoothing stage that strips high-frequency sensor jitter before
+   * anything else sees the signal. Without it, compass noise inflates the
+   * angular-speed estimate, the adaptive cutoff opens, and the jitter passes
+   * straight through - the filter defeats itself.
+   */
+  jitterCutoffHz?: number;
+  /** Adaptive cutoff while stationary; lower = steadier but slower to settle. */
   minCutoffHz?: number;
   /** Cutoff gain per deg/s of motion; higher = tighter tracking while panning. */
   speedCoefficient?: number;
   /** Cutoff of the internal angular-speed estimate. */
   derivativeCutoffHz?: number;
+  /** Upper bound on the adaptive cutoff. */
+  maxCutoffHz?: number;
 }
 
 const FILTER_DEFAULTS: Required<OrientationFilterOptions> = {
-  minCutoffHz: 1,
-  speedCoefficient: 0.06,
-  derivativeCutoffHz: 1.5
+  jitterCutoffHz: 6,
+  minCutoffHz: 0.5,
+  speedCoefficient: 0.1,
+  derivativeCutoffHz: 1,
+  maxCutoffHz: 20
 };
 
-function lowPassAlpha(cutoffHz: number, deltaSeconds: number) {
+export function lowPassAlpha(cutoffHz: number, deltaSeconds: number) {
   return 1 - Math.exp(-2 * Math.PI * cutoffHz * deltaSeconds);
 }
 
 /**
- * One Euro filter over orientation quaternions. The cutoff frequency scales
- * with angular speed, so a still device gets heavy smoothing (no jitter) while
- * a panning device is passed through almost raw (no perceptible lag). This is
- * what replaced the fixed-time-constant filter that read as the overlay
- * trailing the camera by a beat.
+ * Two-stage adaptive filter over orientation quaternions.
+ *
+ * Stage 1 is a fixed low-pass at `jitterCutoffHz` that removes sensor noise
+ * at the cost of ~25ms of latency. Stage 2 is a One Euro filter driven by the
+ * angular speed of the *pre-smoothed* signal: a still device gets heavy
+ * smoothing (no jitter), a panning device is tracked with a wide-open cutoff
+ * (no perceptible lag). Estimating speed after the jitter stage is the key -
+ * raw sensor noise looks like tens of deg/s of motion and would otherwise
+ * hold the adaptive cutoff open at rest.
  */
 export class OrientationFilter {
   private readonly options: Required<OrientationFilterOptions>;
+  private presmoothed: Quaternion | null = null;
   private state: Quaternion | null = null;
-  private lastRaw: Quaternion | null = null;
   private lastTimestampMs: number | null = null;
   private speedDegPerSec = 0;
 
@@ -359,8 +379,8 @@ export class OrientationFilter {
   }
 
   reset() {
+    this.presmoothed = null;
     this.state = null;
-    this.lastRaw = null;
     this.lastTimestampMs = null;
     this.speedDegPerSec = 0;
   }
@@ -370,25 +390,124 @@ export class OrientationFilter {
   }
 
   update(target: Quaternion, timestampMs: number): Quaternion {
-    if (this.state === null || this.lastRaw === null || this.lastTimestampMs === null) {
+    if (this.state === null || this.presmoothed === null || this.lastTimestampMs === null) {
+      this.presmoothed = target;
       this.state = target;
-      this.lastRaw = target;
       this.lastTimestampMs = timestampMs;
       this.speedDegPerSec = 0;
       return target;
     }
 
     const deltaSeconds = Math.min(0.25, Math.max(1e-3, (timestampMs - this.lastTimestampMs) / 1000));
-    const rawSpeed = quatAngleDeg(this.lastRaw, target) / deltaSeconds;
-    const speedAlpha = lowPassAlpha(this.options.derivativeCutoffHz, deltaSeconds);
-    this.speedDegPerSec += (rawSpeed - this.speedDegPerSec) * speedAlpha;
-
-    const cutoff = this.options.minCutoffHz + this.options.speedCoefficient * this.speedDegPerSec;
-    const alpha = lowPassAlpha(cutoff, deltaSeconds);
-    this.state = quatSlerp(this.state, target, alpha);
-    this.lastRaw = target;
     this.lastTimestampMs = timestampMs;
+
+    const previous = this.presmoothed;
+    this.presmoothed = quatSlerp(
+      previous,
+      target,
+      lowPassAlpha(this.options.jitterCutoffHz, deltaSeconds)
+    );
+
+    const rawSpeed = quatAngleDeg(previous, this.presmoothed) / deltaSeconds;
+    this.speedDegPerSec +=
+      (rawSpeed - this.speedDegPerSec) * lowPassAlpha(this.options.derivativeCutoffHz, deltaSeconds);
+
+    const cutoff = Math.min(
+      this.options.maxCutoffHz,
+      this.options.minCutoffHz + this.options.speedCoefficient * this.speedDegPerSec
+    );
+    this.state = quatSlerp(this.state, this.presmoothed, lowPassAlpha(cutoff, deltaSeconds));
     return this.state;
+  }
+}
+
+export interface AngleFilterOptions {
+  /** Fixed pre-smoothing stage, mirrors OrientationFilter. */
+  jitterCutoffHz?: number;
+  minCutoffHz?: number;
+  speedCoefficient?: number;
+  derivativeCutoffHz?: number;
+  maxCutoffHz?: number;
+}
+
+const ANGLE_FILTER_DEFAULTS: Required<AngleFilterOptions> = {
+  jitterCutoffHz: 4,
+  minCutoffHz: 0.8,
+  speedCoefficient: 0.08,
+  derivativeCutoffHz: 1,
+  maxCutoffHz: 10
+};
+
+/**
+ * Circular scalar sibling of OrientationFilter, for readouts like the compass
+ * ribbon heading.
+ *
+ * The boresight heading's sensitivity to device wobble grows as 1/cos(elevation):
+ * pointing the camera up at a high satellite turns a fraction of a degree of
+ * hand shake into several degrees of heading swing, which made the ribbon (and
+ * every satellite pip on it) thrash around. Callers pass `cutoffScale =
+ * cos(elevation)` so the displayed heading is smoothed harder exactly when the
+ * geometry amplifies the noise, keeping the on-screen wobble roughly constant.
+ */
+export class AngleFilter {
+  private readonly options: Required<AngleFilterOptions>;
+  private presmoothedDeg: number | null = null;
+  private valueDeg: number | null = null;
+  private lastTimestampMs: number | null = null;
+  private speedDegPerSec = 0;
+
+  constructor(options: AngleFilterOptions = {}) {
+    this.options = { ...ANGLE_FILTER_DEFAULTS, ...options };
+  }
+
+  reset() {
+    this.presmoothedDeg = null;
+    this.valueDeg = null;
+    this.lastTimestampMs = null;
+    this.speedDegPerSec = 0;
+  }
+
+  update(targetDeg: number, timestampMs: number, cutoffScale = 1): number {
+    if (
+      this.valueDeg === null ||
+      this.presmoothedDeg === null ||
+      this.lastTimestampMs === null
+    ) {
+      this.presmoothedDeg = normalizeDegrees(targetDeg);
+      this.valueDeg = this.presmoothedDeg;
+      this.lastTimestampMs = timestampMs;
+      this.speedDegPerSec = 0;
+      return this.valueDeg;
+    }
+
+    const deltaSeconds = Math.min(0.25, Math.max(1e-3, (timestampMs - this.lastTimestampMs) / 1000));
+    this.lastTimestampMs = timestampMs;
+    const scale = Math.max(0.1, Math.min(1, cutoffScale));
+
+    const previous = this.presmoothedDeg;
+    this.presmoothedDeg = normalizeDegrees(
+      previous +
+        signedAngleDifference(targetDeg, previous) *
+          lowPassAlpha(this.options.jitterCutoffHz, deltaSeconds)
+    );
+
+    const rawSpeed =
+      Math.abs(signedAngleDifference(this.presmoothedDeg, previous)) / deltaSeconds;
+    this.speedDegPerSec +=
+      (rawSpeed - this.speedDegPerSec) * lowPassAlpha(this.options.derivativeCutoffHz, deltaSeconds);
+
+    // Scale is applied to the speed term as well: amplified wobble shows up as
+    // apparent speed, and must not be allowed to re-open the cutoff.
+    const cutoff = Math.min(
+      this.options.maxCutoffHz,
+      scale * (this.options.minCutoffHz + this.options.speedCoefficient * this.speedDegPerSec * scale)
+    );
+    this.valueDeg = normalizeDegrees(
+      this.valueDeg +
+        signedAngleDifference(this.presmoothedDeg, this.valueDeg) *
+          lowPassAlpha(cutoff, deltaSeconds)
+    );
+    return this.valueDeg;
   }
 }
 

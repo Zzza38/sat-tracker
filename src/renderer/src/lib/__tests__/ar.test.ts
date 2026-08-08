@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AngleFilter,
   OrientationFilter,
   applyHeadingTrim,
   directionFromOrientation,
@@ -231,7 +232,7 @@ describe("orientation filter", () => {
     const filter = new OrientationFilter();
     filter.update(pose(0), 0);
     let latest = pose(0);
-    for (let frame = 1; frame <= 60; frame += 1) {
+    for (let frame = 1; frame <= 150; frame += 1) {
       latest = filter.update(pose(20), frame * (1000 / 60));
     }
     expect(viewFromQuaternion(latest).headingDeg).toBeCloseTo(20, 1);
@@ -252,7 +253,7 @@ describe("orientation filter", () => {
     const lag = Math.abs(
       signedAngleDifference(heading, viewFromQuaternion(filtered).headingDeg)
     );
-    expect(lag).toBeLessThan(4);
+    expect(lag).toBeLessThan(8);
   });
 
   it("suppresses sensor jitter while holding still", () => {
@@ -264,7 +265,9 @@ describe("orientation filter", () => {
     const noiseAmplitude = 0.6;
     for (let frame = 1; frame <= 240; frame += 1) {
       // Alternating compass noise around a fixed pose - the worst case for an
-      // adaptive filter, since jitter masquerades as fast motion.
+      // adaptive filter, since jitter masquerades as fast motion. The jitter
+      // pre-stage exists precisely so this noise never reaches the adaptive
+      // cutoff's speed estimate.
       const noisy = 90 + (frame % 2 === 0 ? noiseAmplitude : -noiseAmplitude);
       const out = viewFromQuaternion(filter.update(pose(noisy), frame * frameMs));
       if (frame > 60) {
@@ -273,8 +276,85 @@ describe("orientation filter", () => {
       }
     }
     // The raw stream wobbles across the full 2x amplitude; the filtered one
-    // must be at least three times steadier even in this pathological case.
-    expect(maxHeading - minHeading).toBeLessThan((2 * noiseAmplitude) / 3);
+    // must be at least eight times steadier even in this pathological case.
+    expect(maxHeading - minHeading).toBeLessThan((2 * noiseAmplitude) / 8);
+  });
+
+  it("keeps a small deliberate movement smooth, not snappy", () => {
+    // A 10-degree turn over half a second - the gesture the ribbon has to
+    // render as a glide rather than a jerk.
+    const filter = new OrientationFilter();
+    const frameMs = 1000 / 60;
+    filter.update(pose(0), 0);
+    let previousHeading = 0;
+    let maxFrameStep = 0;
+    for (let frame = 1; frame <= 60; frame += 1) {
+      const target = Math.min(10, (frame * frameMs / 500) * 10);
+      const out = viewFromQuaternion(filter.update(pose(target), frame * frameMs));
+      maxFrameStep = Math.max(
+        maxFrameStep,
+        Math.abs(signedAngleDifference(out.headingDeg, previousHeading))
+      );
+      previousHeading = out.headingDeg;
+    }
+    // The input moves ~0.33 deg/frame; the output must never step much faster
+    // than that (a raw pass-through of stepped sensor events would).
+    expect(maxFrameStep).toBeLessThan(0.6);
+    // And it must still arrive: within a degree shortly after the gesture.
+    expect(Math.abs(signedAngleDifference(previousHeading, 10))).toBeLessThan(1.5);
+  });
+});
+
+describe("ribbon heading filter", () => {
+  it("follows a steady turn closely", () => {
+    const filter = new AngleFilter();
+    const frameMs = 1000 / 60;
+    filter.update(0, 0);
+    let target = 0;
+    let output = 0;
+    for (let frame = 1; frame <= 180; frame += 1) {
+      target = (frame * frameMs * 0.045) % 360; // 45 deg/s
+      output = filter.update(target, frame * frameMs);
+    }
+    expect(Math.abs(signedAngleDifference(target, output))).toBeLessThan(6);
+  });
+
+  it("wraps across north without unwinding", () => {
+    const filter = new AngleFilter();
+    const frameMs = 1000 / 60;
+    filter.update(340, 0);
+    let output = 340;
+    for (let frame = 1; frame <= 120; frame += 1) {
+      const target = (340 + frame * frameMs * 0.03) % 360; // 30 deg/s through 0
+      output = filter.update(target, frame * frameMs);
+    }
+    expect(Math.abs(signedAngleDifference(output, 40))).toBeLessThan(6);
+  });
+
+  it("damps wobble much harder when the elevation scale shrinks", () => {
+    // cos(elevation) scale: pointing up amplifies heading wobble, so the same
+    // wobble must come out far steadier when the scale is low.
+    const measureRange = (scale: number) => {
+      const filter = new AngleFilter();
+      const frameMs = 1000 / 60;
+      filter.update(200, 0);
+      let min = 200;
+      let max = 200;
+      for (let frame = 1; frame <= 300; frame += 1) {
+        const wobbly = 200 + (frame % 2 === 0 ? 4 : -4);
+        const out = filter.update(wobbly, frame * frameMs, scale);
+        if (frame > 100) {
+          min = Math.min(min, out);
+          max = Math.max(max, out);
+        }
+      }
+      return max - min;
+    };
+
+    const steepAim = measureRange(0.3);
+    const levelAim = measureRange(1);
+    expect(steepAim).toBeLessThan(levelAim / 3);
+    expect(steepAim).toBeLessThan(0.2);
   });
 });
 
