@@ -830,9 +830,9 @@ export function ArPage() {
           style={{ width: stageSize.width, height: stageSize.height }}
           role="img"
           aria-label="Satellite positions and projected orbit paths"
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
+          onPointerDown={showSettings ? undefined : handlePointerDown}
+          onPointerMove={showSettings ? undefined : handlePointerMove}
+          onPointerUp={showSettings ? undefined : handlePointerUp}
           onPointerCancel={() => {
             dragRef.current = null;
           }}
@@ -914,7 +914,13 @@ export function ArPage() {
         ) : null}
 
         {showSettings ? (
-          <aside className="ar-settings">
+          <aside
+            className="ar-settings"
+            aria-label="AR settings"
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerMove={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
+          >
             <div className="ar-settings-heading">
               <div>
                 <span className="label">Pointing setup</span>
