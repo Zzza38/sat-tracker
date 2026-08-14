@@ -14,6 +14,23 @@ const headingOf = (quaternion: Quaternion) => viewFromQuaternion(quaternion).hea
 
 const STEP_MS = 1000 / 30;
 
+function settleNorth(
+  fusion: CompassGyroFusion,
+  relativeHeadingDeg: number,
+  magHeadingDeg: number,
+  startMs = 0,
+  accuracyDeg?: number
+) {
+  let now = startMs;
+  const until = startMs + 800;
+  while (now <= until) {
+    fusion.updateRelative(pose(relativeHeadingDeg), now);
+    fusion.updateAbsolute(pose(magHeadingDeg), now, accuracyDeg);
+    now += STEP_MS;
+  }
+  return now;
+}
+
 describe("compass-gyro fusion", () => {
   it("passes the gyro stream through before any compass fix", () => {
     const fusion = new CompassGyroFusion();
@@ -23,14 +40,30 @@ describe("compass-gyro fusion", () => {
     expect(headingOf(output!.quaternion)).toBeCloseTo(30, 5);
   });
 
-  it("snaps onto the first compass fix", () => {
+  it("locks north from a settled magnetometer, not a single sample", () => {
     const fusion = new CompassGyroFusion();
-    // Gyro frame zeroed at an arbitrary heading; compass knows better.
     fusion.updateRelative(pose(0), 0);
     fusion.updateAbsolute(pose(90), 0);
-    const output = fusion.output(0);
-    expect(output?.anchored).toBe(true);
-    expect(headingOf(output!.quaternion)).toBeCloseTo(90, 4);
+    const before = fusion.output(0);
+    expect(before?.anchored).toBe(false);
+    expect(headingOf(before!.quaternion)).toBeCloseTo(0, 5);
+
+    settleNorth(fusion, 0, 90);
+    const locked = fusion.output(800);
+    expect(locked?.anchored).toBe(true);
+    expect(headingOf(locked!.quaternion)).toBeCloseTo(90, 4);
+  });
+
+  it("does not lock north while the IMU is turning", () => {
+    const fusion = new CompassGyroFusion();
+    let now = 0;
+    while (now <= 1000) {
+      fusion.updateRelative(pose((120 * now) / 1000), now);
+      fusion.updateAbsolute(pose(90), now, 10);
+      now += STEP_MS;
+    }
+    const output = fusion.output(now - STEP_MS);
+    expect(output?.anchored).toBe(false);
   });
 
   it("goes stale without fresh gyro samples", () => {

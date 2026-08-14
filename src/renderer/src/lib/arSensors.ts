@@ -23,10 +23,9 @@ import { arDebugLog, arDebugSample, isArDebugEnabled } from "./arDebug";
  *    the relative `deviceorientation` stream supplies all high-frequency
  *    motion (smooth, but its heading zero is arbitrary and drifts), while the
  *    compass stream — `deviceorientationabsolute`, or iOS
- *    `webkitCompassHeading` — may only nudge small errors. Large compass
- *    disagreements with a continuous gyro frame are ignored (a bad
- *    magnetometer lock, not drift); a gyro-frame re-zero rebases the
- *    correction so the displayed heading does not jump.
+ *    `webkitCompassHeading` — is used only to find north: it may lock a
+ *    yaw offset once the IMU is still and mag is settled, then nudge a few
+ *    degrees of gyro bias. It is never the displayed heading on its own.
  * 3. The relative stream alone, when no compass source ever reports.
  */
 
@@ -94,6 +93,9 @@ const STILL_RELATIVE_JUMP_DEG = 2;
 const STILL_MAX_MAG_CORRECTION_DEG = 8;
 /** Mag heading moving this much more than the IMU in one sample is interference. */
 const MAG_VS_IMU_SLACK_DEG = 0.75;
+/** First north lock waits until mag agrees with itself this long while still. */
+const NORTH_SETTLE_MS = 400;
+const NORTH_AGREE_DEG = 8;
 /** Compass fixes with worse reported uncertainty than this are discarded. */
 const MAX_COMPASS_ACCURACY_DEG = 25;
 
@@ -103,12 +105,11 @@ const debugHeading = (quaternion: Quaternion) =>
   round1(viewFromQuaternion(quaternion).headingDeg);
 
 /**
- * Complementary filter joining the two W3C orientation streams. On iPhone
- * Safari the only "compass" available to the web is `webkitCompassHeading`
- * (magnetometer). The IMU (`alpha`/`beta`/`gamma`, gyro + accelerometer) is
- * the sole source of displayed motion; mag may only cancel a few degrees of
- * gyro bias while the IMU is still, and is ignored when it moves without the
- * IMU or disagrees by more than a residual-bias amount.
+ * Complementary filter: the IMU is the source of truth for motion; the
+ * magnetometer only helps find north. Displayed heading is always
+ * `correction * relative`, where `relative` is gyro+accelerometer. Mag never
+ * replaces that quaternion. It may set `correction` once after a brief still
+ * settle (north lock) and afterwards only nudge residual gyro bias.
  */
 export class CompassGyroFusion {
   private relative: Quaternion | null = null;
@@ -118,6 +119,8 @@ export class CompassGyroFusion {
   private correction: Quaternion | null = null;
   private lastCorrectionAtMs: number | null = null;
   private lastAbsolute: Quaternion | null = null;
+  private northCandidate: Quaternion | null = null;
+  private northCandidateAtMs = 0;
 
   updateRelative(quaternion: Quaternion, timestampMs: number) {
     if (this.relative !== null) {
@@ -185,8 +188,34 @@ export class CompassGyroFusion {
     const target = quatNormalize(quatMultiply(quaternion, quatConjugate(this.relative)));
 
     if (this.correction === null || this.lastCorrectionAtMs === null) {
+      // North lock: mag may set the yaw offset only after the IMU is still
+      // and mag has agreed with itself briefly. A single magnetometer sample
+      // is not north.
+      const imuMoving =
+        this.speedDegPerSec > ANCHOR_MAX_SPEED_DEG_PER_SEC ||
+        this.lastRelativeJumpDeg > STILL_RELATIVE_JUMP_DEG;
+      if (imuMoving) {
+        this.northCandidate = null;
+        arDebugSample("anchor-wait-north", 500, { reason: "imu-moving" });
+        return;
+      }
+      if (this.northCandidate === null) {
+        this.northCandidate = target;
+        this.northCandidateAtMs = timestampMs;
+        return;
+      }
+      if (quatAngleDeg(this.northCandidate, target) > NORTH_AGREE_DEG) {
+        this.northCandidate = target;
+        this.northCandidateAtMs = timestampMs;
+        arDebugSample("anchor-wait-north", 500, { reason: "mag-unsettled" });
+        return;
+      }
+      if (timestampMs - this.northCandidateAtMs < NORTH_SETTLE_MS) {
+        return;
+      }
       this.correction = target;
       this.lastCorrectionAtMs = timestampMs;
+      this.northCandidate = null;
       if (isArDebugEnabled()) {
         arDebugLog("anchor-init", {
           relH: debugHeading(this.relative),
@@ -359,15 +388,13 @@ export function startOrientationStream(onSample: OrientationSampleHandler): () =
   }
 
   // --- Source 2 & 3: W3C orientation events through the compass-gyro fusion -
-  const emitFusion = (timestampMs: number, fallback?: Quaternion) => {
+  const emitFusion = (timestampMs: number) => {
     const output = fusion.output(timestampMs);
     if (output) {
       accept(output.quaternion, output.anchored ? "absolute" : "relative");
-    } else if (fallback) {
-      // Compass-only device: no smooth stream to anchor, use it directly and
-      // let the display-side filter absorb what noise it can.
-      accept(fallback, "absolute");
     }
+    // No magnetometer-only fallback: mag finds north, it is not a heading
+    // stream. Without a fresh IMU sample there is nothing to display.
   };
 
   const handleOrientation = (
@@ -439,7 +466,7 @@ export function startOrientationStream(onSample: OrientationSampleHandler): () =
       now,
       hasCompassHeading ? compassEvent.webkitCompassAccuracy : undefined
     );
-    emitFusion(now, absolute);
+    emitFusion(now);
   };
 
   const handleAbsolute = (event: Event) =>
