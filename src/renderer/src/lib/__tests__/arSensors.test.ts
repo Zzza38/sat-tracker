@@ -291,6 +291,31 @@ describe("compass-gyro fusion", () => {
     ).toBeLessThan(3);
   });
 
+  it("does not follow the magnetometer while the IMU is still", () => {
+    // The user's reading of the iPhone log: gyro+accelerometer (alpha) sat
+    // at ~275° the whole time; only webkitCompassHeading walked. Mag is not
+    // a turn sensor — a still IMU must freeze the heading.
+    const fusion = new CompassGyroFusion();
+    let now = 0;
+    while (now <= 2000) {
+      fusion.updateRelative(pose(0), now);
+      fusion.updateAbsolute(pose(90), now, 10);
+      now += STEP_MS;
+    }
+
+    let worst = 0;
+    for (let offset = 1; offset <= 90; offset += 1) {
+      fusion.updateRelative(pose(0), now);
+      fusion.updateAbsolute(pose(90 + offset), now, 10);
+      worst = Math.max(
+        worst,
+        Math.abs(signedAngleDifference(headingOf(fusion.output(now)!.quaternion), 90))
+      );
+      now += STEP_MS;
+    }
+    expect(worst).toBeLessThan(1);
+  });
+
   it("does not snap a frame jump onto a sloppy compass fix", () => {
     const fusion = new CompassGyroFusion();
     let now = 0;

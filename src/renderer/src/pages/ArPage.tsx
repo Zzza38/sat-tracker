@@ -92,8 +92,8 @@ type SensorState = "idle" | "pending" | "live" | "unavailable";
 
 const SOURCE_LABELS: Record<OrientationSource, string> = {
   fused: "fused sensors",
-  absolute: "compass",
-  relative: "gyro only"
+  absolute: "gyro + mag",
+  relative: "gyro"
 };
 
 function readStoredNumber(key: string, fallback: number, min: number, max: number) {

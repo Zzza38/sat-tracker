@@ -82,6 +82,18 @@ const SPEED_CUTOFF_HZ = 1.5;
 const MAX_SPEED_SAMPLE_GAP_S = 0.5;
 /** Cap the slew dt so a multi-second event gap cannot take a 5° step. */
 const MAX_SLEW_DELTA_S = 0.1;
+/**
+ * Magnetometer (webkitCompassHeading) is not a turn sensor. Heading changes
+ * come from the IMU (gyro + accelerometer). Mag may only cancel a few degrees
+ * of gyro bias while the IMU is actually still — never a turn the IMU did not
+ * measure. Field log 2026-08-14: alpha sat at ~275° while mag sat ~90° off;
+ * treating that as a heading change produced the crawl-then-flip.
+ */
+const STILL_RELATIVE_JUMP_DEG = 2;
+/** Residual gyro bias we will still cancel from mag while the IMU is still. */
+const STILL_MAX_MAG_CORRECTION_DEG = 8;
+/** Mag heading moving this much more than the IMU in one sample is interference. */
+const MAG_VS_IMU_SLACK_DEG = 0.75;
 /** Compass fixes with worse reported uncertainty than this are discarded. */
 const MAX_COMPASS_ACCURACY_DEG = 25;
 
@@ -91,27 +103,28 @@ const debugHeading = (quaternion: Quaternion) =>
   round1(viewFromQuaternion(quaternion).headingDeg);
 
 /**
- * Complementary filter joining the two W3C orientation streams: gyro-relative
- * orientation for responsiveness, compass for absolute reference. Once the
- * first compass fix has locked the gyro frame, the compass may only nudge
- * small errors (genuine gyro drift). A large disagreement with a continuous
- * gyro frame is treated as a bad magnetometer lock and ignored — that is the
- * "shifts slowly, then flips" failure from the 2026-08-14 iPhone log. A
- * gyro-frame re-zero (tab resume) rebases the correction so the displayed
- * heading does not jump; we never snap onto a sloppy compass to recover.
+ * Complementary filter joining the two W3C orientation streams. On iPhone
+ * Safari the only "compass" available to the web is `webkitCompassHeading`
+ * (magnetometer). The IMU (`alpha`/`beta`/`gamma`, gyro + accelerometer) is
+ * the sole source of displayed motion; mag may only cancel a few degrees of
+ * gyro bias while the IMU is still, and is ignored when it moves without the
+ * IMU or disagrees by more than a residual-bias amount.
  */
 export class CompassGyroFusion {
   private relative: Quaternion | null = null;
   private relativeAtMs = 0;
+  private lastRelativeJumpDeg = 0;
   private speedDegPerSec = 0;
   private correction: Quaternion | null = null;
   private lastCorrectionAtMs: number | null = null;
+  private lastAbsolute: Quaternion | null = null;
 
   updateRelative(quaternion: Quaternion, timestampMs: number) {
     if (this.relative !== null) {
       const deltaSeconds = (timestampMs - this.relativeAtMs) / 1000;
       if (deltaSeconds > 0) {
         const jumpDeg = quatAngleDeg(this.relative, quaternion);
+        this.lastRelativeJumpDeg = jumpDeg;
         if (deltaSeconds <= MAX_SPEED_SAMPLE_GAP_S) {
           const rawSpeed = jumpDeg / deltaSeconds;
           this.speedDegPerSec +=
@@ -138,6 +151,7 @@ export class CompassGyroFusion {
           // Dropped events: keep the motion gate closed until fresh still
           // samples arrive. Do not rebase — a large jump across a gap may be
           // a real turn whose in-between samples were lost.
+          this.lastRelativeJumpDeg = jumpDeg;
           this.speedDegPerSec = Math.max(
             this.speedDegPerSec,
             jumpDeg / deltaSeconds,
@@ -158,6 +172,9 @@ export class CompassGyroFusion {
     if (this.relative === null) {
       return;
     }
+    const magJumpDeg =
+      this.lastAbsolute === null ? 0 : quatAngleDeg(this.lastAbsolute, quaternion);
+    this.lastAbsolute = quaternion;
     if (
       accuracyDeg !== undefined &&
       (accuracyDeg < 0 || accuracyDeg > MAX_COMPASS_ACCURACY_DEG)
@@ -193,6 +210,33 @@ export class CompassGyroFusion {
     this.lastCorrectionAtMs = timestampMs;
     const deltaDeg = quatAngleDeg(this.correction, target);
     if (deltaDeg < 1e-4) {
+      return;
+    }
+
+    // Magnetometer is not a gyroscope. If the IMU barely moved and mag wants
+    // a heading change bigger than residual bias, that is interference — the
+    // 2026-08-14 hold-still-then-flip, where alpha sat at 275° the whole time.
+    if (
+      this.lastRelativeJumpDeg < STILL_RELATIVE_JUMP_DEG &&
+      deltaDeg > STILL_MAX_MAG_CORRECTION_DEG
+    ) {
+      arDebugSample("anchor-reject-imu-still", 250, {
+        deltaDeg: round1(deltaDeg),
+        imuJump: round1(this.lastRelativeJumpDeg),
+        magJump: round1(magJumpDeg),
+        relH: debugHeading(this.relative),
+        absH: debugHeading(quaternion),
+        acc: accuracyDeg
+      });
+      return;
+    }
+
+    if (magJumpDeg > this.lastRelativeJumpDeg + MAG_VS_IMU_SLACK_DEG) {
+      arDebugSample("anchor-reject-mag-disturbance", 250, {
+        magJump: round1(magJumpDeg),
+        imuJump: round1(this.lastRelativeJumpDeg),
+        acc: accuracyDeg
+      });
       return;
     }
 
