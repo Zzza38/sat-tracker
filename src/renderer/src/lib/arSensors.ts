@@ -23,10 +23,10 @@ import { arDebugLog, arDebugSample, isArDebugEnabled } from "./arDebug";
  *    the relative `deviceorientation` stream supplies all high-frequency
  *    motion (smooth, but its heading zero is arbitrary and drifts), while the
  *    compass stream — `deviceorientationabsolute`, or iOS
- *    `webkitCompassHeading` — is applied only as a slow, slew-limited anchor.
- *    Raw magnetometer headings routinely spike 20-40° indoors; fed to the
- *    display directly they made the whole overlay thrash around, so they are
- *    never allowed to move the view quickly.
+ *    `webkitCompassHeading` — may only nudge small errors. Large compass
+ *    disagreements with a continuous gyro frame are ignored (a bad
+ *    magnetometer lock, not drift); a gyro-frame re-zero rebases the
+ *    correction so the displayed heading does not jump.
  * 3. The relative stream alone, when no compass source ever reports.
  */
 
@@ -58,9 +58,15 @@ const FUSED_SENSOR_FREQUENCY_HZ = 60;
 const CORRECTION_MAX_SLEW_DEG_PER_SEC = 5;
 /** Low-pass cutoff of the anchor for small persistent offsets. */
 const CORRECTION_CUTOFF_HZ = 0.2;
-/** A disagreement this large is a frame reset, not drift; snap after a while. */
-const CORRECTION_SNAP_DEG = 45;
-const CORRECTION_SNAP_AFTER_MS = 2000;
+/**
+ * Disagreements larger than this, with a continuous gyro frame, are a bad
+ * compass lock — not gyro drift. Field log 2026-08-14: compass sat ~90° off
+ * with 20-40° accuracy; the old 2 s snap then flipped the view from 311° to
+ * 24°. Ignore those fixes and let the gyro carry the heading.
+ */
+const ANCHOR_IGNORE_DEG = 25;
+/** A single relative-sample jump this large is a gyro-frame re-zero. */
+const FRAME_JUMP_DEG = 60;
 /** Without a recent relative sample the fusion has no fast path to anchor. */
 const RELATIVE_FRESH_MS = 800;
 /**
@@ -74,8 +80,10 @@ const ANCHOR_MAX_SPEED_DEG_PER_SEC = 15;
 /** Low-pass for the angular-speed estimate driving the motion gate. */
 const SPEED_CUTOFF_HZ = 1.5;
 const MAX_SPEED_SAMPLE_GAP_S = 0.5;
+/** Cap the slew dt so a multi-second event gap cannot take a 5° step. */
+const MAX_SLEW_DELTA_S = 0.1;
 /** Compass fixes with worse reported uncertainty than this are discarded. */
-const MAX_COMPASS_ACCURACY_DEG = 50;
+const MAX_COMPASS_ACCURACY_DEG = 25;
 
 const round1 = (value: number) => Math.round(value * 10) / 10;
 /** Heading a quaternion points at, for the debug log only. */
@@ -84,14 +92,13 @@ const debugHeading = (quaternion: Quaternion) =>
 
 /**
  * Complementary filter joining the two W3C orientation streams: gyro-relative
- * orientation for responsiveness, compass for absolute reference. The
- * correction rotating the relative frame onto the compass frame is adapted
- * slowly and with a hard slew limit, so a 35-degree magnetometer spike moves
- * the view by a degree or two at most, while genuine gyro drift (well under a
- * degree per second) is still corrected promptly. Compass fixes are ignored
- * entirely while the device is turning and when iOS flags them as inaccurate
- * — the same policy that keeps the native Compass app rock-solid under
- * shaking.
+ * orientation for responsiveness, compass for absolute reference. Once the
+ * first compass fix has locked the gyro frame, the compass may only nudge
+ * small errors (genuine gyro drift). A large disagreement with a continuous
+ * gyro frame is treated as a bad magnetometer lock and ignored — that is the
+ * "shifts slowly, then flips" failure from the 2026-08-14 iPhone log. A
+ * gyro-frame re-zero (tab resume) rebases the correction so the displayed
+ * heading does not jump; we never snap onto a sloppy compass to recover.
  */
 export class CompassGyroFusion {
   private relative: Quaternion | null = null;
@@ -99,17 +106,44 @@ export class CompassGyroFusion {
   private speedDegPerSec = 0;
   private correction: Quaternion | null = null;
   private lastCorrectionAtMs: number | null = null;
-  private largeDeltaSinceMs: number | null = null;
 
   updateRelative(quaternion: Quaternion, timestampMs: number) {
     if (this.relative !== null) {
       const deltaSeconds = (timestampMs - this.relativeAtMs) / 1000;
-      if (deltaSeconds > 0 && deltaSeconds <= MAX_SPEED_SAMPLE_GAP_S) {
-        const rawSpeed = quatAngleDeg(this.relative, quaternion) / deltaSeconds;
-        this.speedDegPerSec +=
-          (rawSpeed - this.speedDegPerSec) * lowPassAlpha(SPEED_CUTOFF_HZ, deltaSeconds);
-      } else {
-        this.speedDegPerSec = 0;
+      if (deltaSeconds > 0) {
+        const jumpDeg = quatAngleDeg(this.relative, quaternion);
+        if (deltaSeconds <= MAX_SPEED_SAMPLE_GAP_S) {
+          const rawSpeed = jumpDeg / deltaSeconds;
+          this.speedDegPerSec +=
+            (rawSpeed - this.speedDegPerSec) * lowPassAlpha(SPEED_CUTOFF_HZ, deltaSeconds);
+          // Impossible physical rate: the relative frame re-zeroed. Rebase
+          // the correction so the fused heading stays put instead of jumping
+          // with the sensor, and instead of snapping onto whatever the
+          // compass currently claims.
+          if (jumpDeg > FRAME_JUMP_DEG && this.correction !== null) {
+            this.correction = quatNormalize(
+              quatMultiply(
+                this.correction,
+                quatMultiply(this.relative, quatConjugate(quaternion))
+              )
+            );
+            if (isArDebugEnabled()) {
+              arDebugLog("anchor-rebase", {
+                jumpDeg: round1(jumpDeg),
+                relH: debugHeading(quaternion)
+              });
+            }
+          }
+        } else {
+          // Dropped events: keep the motion gate closed until fresh still
+          // samples arrive. Do not rebase — a large jump across a gap may be
+          // a real turn whose in-between samples were lost.
+          this.speedDegPerSec = Math.max(
+            this.speedDegPerSec,
+            jumpDeg / deltaSeconds,
+            ANCHOR_MAX_SPEED_DEG_PER_SEC + 1
+          );
+        }
       }
     }
     this.relative = quaternion;
@@ -151,63 +185,43 @@ export class CompassGyroFusion {
     // current anchor and let the gyro carry the view alone.
     if (this.speedDegPerSec > ANCHOR_MAX_SPEED_DEG_PER_SEC) {
       this.lastCorrectionAtMs = timestampMs;
-      this.largeDeltaSinceMs = null;
       arDebugSample("anchor-hold-motion", 1000, { speed: round1(this.speedDegPerSec) });
       return;
     }
 
-    const deltaSeconds = Math.min(1, Math.max(1e-3, (timestampMs - this.lastCorrectionAtMs) / 1000));
+    const elapsedMs = timestampMs - this.lastCorrectionAtMs;
     this.lastCorrectionAtMs = timestampMs;
     const deltaDeg = quatAngleDeg(this.correction, target);
     if (deltaDeg < 1e-4) {
-      this.largeDeltaSinceMs = null;
       return;
     }
 
-    // A huge, persistent disagreement means the relative frame itself jumped
-    // (tab resume, sensor restart). Waiting out the slew limit would take ages,
-    // so snap once the disagreement has clearly settled in.
-    if (deltaDeg > CORRECTION_SNAP_DEG) {
-      if (this.largeDeltaSinceMs === null) {
-        this.largeDeltaSinceMs = timestampMs;
-      } else if (timestampMs - this.largeDeltaSinceMs > CORRECTION_SNAP_AFTER_MS) {
-        this.correction = target;
-        this.largeDeltaSinceMs = null;
-        // The prime suspect for a sudden random flip mid-session: log every
-        // snap unthrottled, with both sides of the disagreement.
-        if (isArDebugEnabled()) {
-          arDebugLog("anchor-snap", {
-            deltaDeg: round1(deltaDeg),
-            relH: debugHeading(this.relative),
-            absH: debugHeading(quaternion),
-            acc: accuracyDeg,
-            speed: round1(this.speedDegPerSec)
-          });
-        }
-        return;
-      }
-    } else {
-      this.largeDeltaSinceMs = null;
+    // Continuous gyro frame + large compass disagreement = bad magnetometer
+    // lock. Holding is what stops the slow crawl-then-flip.
+    if (deltaDeg > ANCHOR_IGNORE_DEG) {
+      arDebugSample("anchor-reject-disagreement", 250, {
+        deltaDeg: round1(deltaDeg),
+        relH: debugHeading(this.relative),
+        absH: debugHeading(quaternion),
+        acc: accuracyDeg,
+        speed: round1(this.speedDegPerSec)
+      });
+      return;
     }
 
+    const deltaSeconds = Math.min(MAX_SLEW_DELTA_S, Math.max(1e-3, elapsedMs / 1000));
     const lowPassStepDeg = deltaDeg * lowPassAlpha(CORRECTION_CUTOFF_HZ, deltaSeconds);
     const stepDeg = Math.min(lowPassStepDeg, CORRECTION_MAX_SLEW_DEG_PER_SEC * deltaSeconds);
     this.correction = quatSlerp(this.correction, target, stepDeg / deltaDeg);
     if (isArDebugEnabled()) {
-      // "anchor" traces the slow shift; "anchor-large" catches the run-up to
-      // a snap (disagreement above 20°) at a faster cadence.
-      const data = {
+      arDebugSample("anchor", 500, {
         deltaDeg: round1(deltaDeg),
         stepDeg: Math.round(stepDeg * 1000) / 1000,
         relH: debugHeading(this.relative),
         absH: debugHeading(quaternion),
         acc: accuracyDeg,
         speed: round1(this.speedDegPerSec)
-      };
-      arDebugSample("anchor", 500, data);
-      if (deltaDeg > 20) {
-        arDebugSample("anchor-large", 250, data);
-      }
+      });
     }
   }
 

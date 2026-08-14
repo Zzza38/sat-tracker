@@ -225,10 +225,10 @@ describe("compass-gyro fusion", () => {
     ).toBeLessThan(0.5);
   });
 
-  it("re-snaps after a persistent gyro frame reset", () => {
-    // A tab resume or sensor restart re-zeroes the relative stream, which
-    // looks like a huge persistent correction error. Slew-limiting through
-    // 120 degrees would take half a minute; the fusion snaps instead.
+  it("preserves heading across a gyro frame re-zero", () => {
+    // A tab resume re-zeroes the relative stream in a single sample. Rebase
+    // the correction so the fused heading stays put rather than jumping with
+    // the sensor or snapping onto the compass.
     const fusion = new CompassGyroFusion();
     let now = 0;
     while (now <= 1000) {
@@ -236,14 +236,73 @@ describe("compass-gyro fusion", () => {
       fusion.updateAbsolute(pose(90), now);
       now += STEP_MS;
     }
-    const resetUntil = now + 3500;
-    while (now <= resetUntil) {
-      fusion.updateRelative(pose(120), now);
-      fusion.updateAbsolute(pose(90), now);
+    fusion.updateRelative(pose(120), now);
+    fusion.updateAbsolute(pose(90), now);
+    expect(
+      Math.abs(signedAngleDifference(headingOf(fusion.output(now)!.quaternion), 90))
+    ).toBeLessThan(2);
+  });
+
+  it("does not crawl or flip when the compass locks 90° off", () => {
+    // Replay of the 2026-08-14 iPhone log: gyro-carried heading held near
+    // 310° while webkitCompassHeading settled around 40° with ~20-40°
+    // accuracy. The old 2 s snap then flipped the view to 24°. A continuous
+    // gyro frame plus a large compass disagreement must be ignored.
+    const fusion = new CompassGyroFusion();
+    let now = 0;
+    while (now <= 2000) {
+      fusion.updateRelative(pose(80), now);
+      fusion.updateAbsolute(pose(310), now, 12);
       now += STEP_MS;
     }
+    expect(headingOf(fusion.output(now - STEP_MS)!.quaternion)).toBeCloseTo(310, 1);
+
+    let worst = 0;
+    const wrongUntil = now + 4000;
+    while (now <= wrongUntil) {
+      fusion.updateRelative(pose(80), now);
+      fusion.updateAbsolute(pose(40), now, 20);
+      worst = Math.max(
+        worst,
+        Math.abs(signedAngleDifference(headingOf(fusion.output(now)!.quaternion), 310))
+      );
+      now += STEP_MS;
+    }
+    expect(worst).toBeLessThan(0.5);
+  });
+
+  it("does not take a 5° compass step after a multi-second event gap", () => {
+    // Safari dropped ~6 s of events in the same log, then a 96° compass
+    // disagreement was applied as a 5° step because dt was clamped to 1 s
+    // and speed was zeroed (opening the motion gate). A gap must not do that.
+    const fusion = new CompassGyroFusion();
+    let now = 0;
+    while (now <= 2000) {
+      fusion.updateRelative(pose(0), now);
+      fusion.updateAbsolute(pose(90), now, 12);
+      now += STEP_MS;
+    }
+
+    now += 6000;
+    fusion.updateRelative(pose(2), now);
+    fusion.updateAbsolute(pose(180), now, 20);
     expect(
-      Math.abs(signedAngleDifference(headingOf(fusion.output(now - STEP_MS)!.quaternion), 90))
-    ).toBeLessThan(2);
+      Math.abs(signedAngleDifference(headingOf(fusion.output(now)!.quaternion), 90))
+    ).toBeLessThan(3);
+  });
+
+  it("does not snap a frame jump onto a sloppy compass fix", () => {
+    const fusion = new CompassGyroFusion();
+    let now = 0;
+    while (now <= 1000) {
+      fusion.updateRelative(pose(0), now);
+      fusion.updateAbsolute(pose(90), now, 8);
+      now += STEP_MS;
+    }
+    fusion.updateRelative(pose(120), now);
+    fusion.updateAbsolute(pose(200), now, 22);
+    expect(
+      Math.abs(signedAngleDifference(headingOf(fusion.output(now)!.quaternion), 90))
+    ).toBeLessThan(3);
   });
 });
