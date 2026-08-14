@@ -363,4 +363,38 @@ describe("compass-gyro fusion", () => {
       Math.abs(signedAngleDifference(headingOf(fusion.output(now)!.quaternion), 90))
     ).toBeLessThan(3);
   });
+
+  it("does not update the anchor from a stale gyro pose", () => {
+    const fusion = new CompassGyroFusion();
+    let now = settleNorth(fusion, 0, 90, 0, 10);
+    const staleUntil = now + 2500;
+    while (now <= staleUntil) {
+      fusion.updateAbsolute(pose(98), now, 10);
+      now += STEP_MS;
+    }
+    fusion.updateRelative(pose(0), now);
+    expect(
+      Math.abs(signedAngleDifference(headingOf(fusion.output(now)!.quaternion), 90))
+    ).toBeLessThan(1);
+  });
+
+  it("lets a trusted mag fix through after inaccurate samples", () => {
+    const fusion = new CompassGyroFusion();
+    let now = settleNorth(fusion, 0, 90, 0, 10);
+    const badUntil = now + 1000;
+    while (now <= badUntil) {
+      fusion.updateRelative(pose(0), now);
+      fusion.updateAbsolute(pose(150), now, 80);
+      now += STEP_MS;
+    }
+    const goodUntil = now + 4000;
+    while (now <= goodUntil) {
+      fusion.updateRelative(pose(0), now);
+      fusion.updateAbsolute(pose(95), now, 5);
+      now += STEP_MS;
+    }
+    expect(
+      Math.abs(signedAngleDifference(headingOf(fusion.output(now - STEP_MS)!.quaternion), 95))
+    ).toBeLessThan(1);
+  });
 });

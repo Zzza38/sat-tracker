@@ -172,12 +172,9 @@ export class CompassGyroFusion {
   }
 
   updateAbsolute(quaternion: Quaternion, timestampMs: number, accuracyDeg?: number) {
-    if (this.relative === null) {
+    if (this.relative === null || !this.hasFreshRelative(timestampMs)) {
       return;
     }
-    const magJumpDeg =
-      this.lastAbsolute === null ? 0 : quatAngleDeg(this.lastAbsolute, quaternion);
-    this.lastAbsolute = quaternion;
     if (
       accuracyDeg !== undefined &&
       (accuracyDeg < 0 || accuracyDeg > MAX_COMPASS_ACCURACY_DEG)
@@ -185,6 +182,9 @@ export class CompassGyroFusion {
       arDebugSample("anchor-reject-accuracy", 1000, { acc: accuracyDeg });
       return;
     }
+    const magJumpDeg =
+      this.lastAbsolute === null ? 0 : quatAngleDeg(this.lastAbsolute, quaternion);
+    this.lastAbsolute = quaternion;
     const target = quatNormalize(quatMultiply(quaternion, quatConjugate(this.relative)));
 
     if (this.correction === null || this.lastCorrectionAtMs === null) {
