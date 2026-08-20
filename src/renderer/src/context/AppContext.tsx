@@ -7,6 +7,7 @@ import {
   importFromTleSource,
   listSatellites,
   refreshSatellite,
+  removeSatellite,
   toggleWatchlistSatellite
 } from "@/shared/catalog/service";
 import { isBrowserOnline, seedOfflineCatalog } from "@/shared/catalog/offline-seed";
@@ -90,6 +91,7 @@ interface AppContextValue {
   importTleSource: (sourceId: string) => Promise<void>;
   refreshSelectedSatellite: () => Promise<void>;
   toggleWatchlist: (satelliteId: string) => Promise<string[]>;
+  removeCatalogSatellite: (satelliteId: string) => Promise<void>;
   selectObserver: (observerId: string) => Promise<void>;
   updateObserver: (observer: ObserverSite) => Promise<void>;
   deleteObserver: (observerId: string) => Promise<void>;
@@ -156,6 +158,10 @@ function catalogNeedsRefresh(
   // An empty catalog with configured sources should always recover via a
   // background import, even after the initial seed already ran once.
   if (records.length === 0) {
+    return true;
+  }
+
+  if (records.some((record) => record.source === "seed")) {
     return true;
   }
 
@@ -394,6 +400,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       tleSources: DEFAULT_TLE_SOURCES,
       defaultTleSourceId: "stations",
       trackOnAdd: false,
+      hiddenSatelliteIds: [],
       satelliteColors: {},
       activeObserverId: DEFAULT_OBSERVER.id
     },
@@ -462,6 +469,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         selectSatellite(ids[0] ?? null);
       }
       return ids;
+    },
+    removeCatalogSatellite: async (satelliteId) => {
+      await removeSatellite(satelliteId);
+      await refreshCatalog({ silent: true });
     },
     selectObserver: async (observerId) => {
       const selectionEpoch = ++observerSelectionEpochRef.current;

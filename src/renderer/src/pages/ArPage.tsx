@@ -192,7 +192,7 @@ export function ArPage() {
   const [compassTrim, setCompassTrim] = useState(() =>
     readStoredNumber(COMPASS_TRIM_KEY, 0, -MAX_COMPASS_TRIM_DEG, MAX_COMPASS_TRIM_DEG)
   );
-  const [debugMode, setDebugMode] = useState(isArDebugEnabled);
+  const [debugMode, setDebugMode] = useState(() => import.meta.env.DEV && isArDebugEnabled());
   const [, setReminderRevision] = useState(0);
 
   const fieldOfView = useMemo(
@@ -498,7 +498,7 @@ export function ArPage() {
     }
     lastHudUpdateRef.current = frameTimeMs;
 
-    if (isArDebugEnabled()) {
+    if (import.meta.env.DEV && isArDebugEnabled()) {
       // What the user actually sees, to correlate against the sensor entries.
       arDebugSample("view", 400, {
         h: Math.round(view.headingDeg * 10) / 10,
@@ -788,6 +788,10 @@ export function ArPage() {
       }
     }
     const enabled = togglePassReminder(nextPass);
+    if (enabled === null) {
+      showToast("Browser storage blocked this pass alert");
+      return;
+    }
     setReminderRevision((value) => value + 1);
     showToast(enabled ? "Alert set · 10 min before pass" : "Pass alert removed");
   }
@@ -873,7 +877,7 @@ export function ArPage() {
           </div>
         ) : null}
 
-        {arStarted && debugMode ? (
+        {import.meta.env.DEV && arStarted && debugMode ? (
           <button
             type="button"
             className="ar-debug-poi"
@@ -921,6 +925,7 @@ export function ArPage() {
             onPointerMove={(event) => event.stopPropagation()}
             onWheel={(event) => event.stopPropagation()}
           >
+            {import.meta.env.DEV ? <>
             <div className="ar-settings-heading">
               <div>
                 <span className="label">Pointing setup</span>
@@ -1063,6 +1068,7 @@ export function ArPage() {
               Records the raw sensor stream and every compass-fusion decision. Tap the floating
               POI button the instant the view misbehaves, then export the log as JSON.
             </p>
+            </> : null}
 
             <button
               type="button"

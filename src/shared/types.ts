@@ -108,6 +108,7 @@ export interface AppSettings {
   tleSources: TleSource[];
   defaultTleSourceId: string;
   trackOnAdd: boolean;
+  hiddenSatelliteIds: string[];
   satelliteColors: Record<string, string>;
 }
 

@@ -27,8 +27,20 @@ describe("propagation engine", () => {
 
   it("computes a live snapshot for an observer", () => {
     const snapshot = computeOrbitSnapshot(record, new Date("2019-06-05T12:30:00Z"), DEFAULT_OBSERVER);
+    expect(snapshot.timestamp).toBe("2019-06-05T12:30:00.000Z");
     expect(snapshot.latitudeDeg).toBeGreaterThan(-90);
     expect(snapshot.latitudeDeg).toBeLessThan(90);
+    expect(snapshot.longitudeDeg).toBeGreaterThanOrEqual(-180);
+    expect(snapshot.longitudeDeg).toBeLessThanOrEqual(180);
+    expect(snapshot.altitudeKm).toBeGreaterThan(350);
+    expect(snapshot.altitudeKm).toBeLessThan(500);
+    expect(snapshot.azimuthDeg).toBeGreaterThanOrEqual(0);
+    expect(snapshot.azimuthDeg).toBeLessThan(360);
+    expect(snapshot.elevationDeg).toBeGreaterThanOrEqual(-90);
+    expect(snapshot.elevationDeg).toBeLessThanOrEqual(90);
     expect(snapshot.rangeKm).toBeGreaterThan(0);
+    expect(snapshot.velocityKmS).toBeGreaterThan(7);
+    expect(snapshot.velocityKmS).toBeLessThan(8);
+    expect(typeof snapshot.sunlit).toBe("boolean");
   });
 });

@@ -294,7 +294,11 @@ export function PassesPage() {
       setError("Notification permission is required to set a pass alert.");
       return;
     }
-    togglePassReminder(pass);
+    const enabled = togglePassReminder(pass);
+    if (enabled === null) {
+      setError("This browser blocked storage, so the pass alert could not be saved.");
+      return;
+    }
     setReminderRevision((value) => value + 1);
   }
 
@@ -395,6 +399,9 @@ export function PassesPage() {
             </div>
           ) : null}
         </div>
+        <p className="mt-2 text-xs text-[var(--faint)]">
+          Pass alerts fire while Sat Tracker is open. Browser and OS power-saving rules can pause them.
+        </p>
 
         {/* The card list has no column headers to click, so surface sorting explicitly on phones. */}
         <div className="mt-5 flex items-center gap-2 md:hidden">
@@ -427,17 +434,14 @@ export function PassesPage() {
               <div
                 key={`${pass.satelliteId}-${pass.aos}`}
                 className={clsx("pass-card", selected && "selected")}
-                role="button"
-                tabIndex={0}
                 aria-current={selected ? "true" : undefined}
-                onClick={() => inspectPass(pass)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    inspectPass(pass);
-                  }
-                }}
               >
+                <button
+                  type="button"
+                  className="pass-card-select"
+                  onClick={() => inspectPass(pass)}
+                  aria-label={`Inspect ${pass.satelliteName} pass at ${formatTimestamp(pass.aos)}`}
+                >
                 <span className="flex min-w-0 items-center justify-between gap-3">
                   <span className="flex min-w-0 items-center gap-2 font-medium text-[var(--text)]">
                     <span
@@ -463,6 +467,7 @@ export function PassesPage() {
                   <span>{formatDuration(pass.durationSec)}</span>
                   <span>{pass.illuminated ? "Sunlit" : "In shadow"}</span>
                 </span>
+                </button>
                 <button
                   type="button"
                   className={clsx("pass-notify", hasPassReminder(pass) && "active")}
@@ -549,28 +554,28 @@ export function PassesPage() {
                   <tr
                     key={`${pass.satelliteId}-${pass.aos}`}
                     className={clsx("cursor-pointer", selected && "bg-[var(--accent-soft)]")}
-                    tabIndex={0}
-                    aria-label={`${pass.satelliteName}, AOS ${formatTimestamp(pass.aos)}, max elevation ${pass.maxElevationDeg.toFixed(1)} degrees. Press Enter to inspect pass geometry.`}
                     aria-current={selected ? "true" : undefined}
                     onClick={() => selectPass(pass)}
                     onDoubleClick={() => inspectPass(pass)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        inspectPass(pass);
-                      }
-                    }}
-                    title="Press Enter or double-click to inspect pass geometry"
+                    title="Double-click to inspect pass geometry"
                   >
                     <td>
-                      <span className="inline-flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-2 text-left"
+                        aria-label={`Inspect ${pass.satelliteName} pass at ${formatTimestamp(pass.aos)}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          inspectPass(pass);
+                        }}
+                      >
                         <span
                           className="size-2.5 rounded-full border border-[rgba(255,255,255,0.35)]"
                           style={{ backgroundColor: getSatelliteColor(pass.satelliteId, visibleSatelliteIds) }}
                           aria-hidden="true"
                         />
                         {pass.satelliteName}
-                      </span>
+                      </button>
                     </td>
                     <td className="mono">
                       <div className="whitespace-nowrap text-[var(--text)]">{aosParts.datePart}</div>

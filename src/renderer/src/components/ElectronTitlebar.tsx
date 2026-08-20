@@ -79,11 +79,11 @@ export function ElectronTitlebar() {
     if (!menu) {
       return;
     }
-    const options = menu.querySelectorAll<HTMLElement>('[role="option"]');
+    const options = menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]');
     if (options.length === 0) {
       return;
     }
-    const target = menu.querySelector<HTMLElement>('[role="option"][aria-selected="true"]') ?? options[0];
+    const target = menu.querySelector<HTMLElement>('[role="menuitemradio"][aria-checked="true"]') ?? options[0];
     target.focus();
   }, [satelliteMenuOpen]);
 
@@ -165,14 +165,14 @@ export function ElectronTitlebar() {
           {satelliteMenuOpen && menuSatellites.length > 0 ? (
             <div
               className="electron-titlebar-satellite-menu"
-              role="listbox"
+              role="menu"
               aria-label="Satellites"
               onKeyDown={(event) => {
                 const menu = satelliteMenuRef.current;
                 if (!menu) {
                   return;
                 }
-                const options = Array.from(menu.querySelectorAll<HTMLElement>('[role="option"]'));
+                const options = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]'));
                 const index = options.indexOf(document.activeElement as HTMLElement);
                 if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                   event.preventDefault();

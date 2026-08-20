@@ -47,7 +47,20 @@ export async function predictPassesBulkWasm(
     throw new Error("Pass prediction end time must be after the start time.");
   }
   const durationSeconds = (end.getTime() - start.getTime()) / 1000;
-  const stepSeconds = Math.max(requestedStepSeconds, Math.ceil(durationSeconds / MAX_BULK_DATES));
+  const requestedDateCount = Math.ceil(durationSeconds / requestedStepSeconds) + 1;
+  // Coarsening the grid can skip an entire short pass. Preserve the caller's
+  // requested resolution and use the per-satellite predictor for long windows;
+  // this still runs off the UI thread when called through predictor.worker.
+  if (requestedDateCount > MAX_BULK_DATES) {
+    const allPasses: PassPrediction[] = [];
+    records.forEach((record, index) => {
+      const passes = predictPassesForSatellite(record, observer, options);
+      allPasses.push(...passes);
+      onSatellitePasses?.(passes, index + 1, records.length);
+    });
+    return allPasses.sort((left, right) => left.aos.localeCompare(right.aos));
+  }
+  const stepSeconds = requestedStepSeconds;
   const observerGeodetic = observerToGeodetic(observer);
   const validRecords = records.flatMap((record) => {
     try {

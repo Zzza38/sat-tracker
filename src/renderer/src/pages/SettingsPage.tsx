@@ -199,15 +199,24 @@ export function SettingsPage() {
         return;
       }
 
-      void updateObserver(observerToSave).then(() => {
-        // Ignore completions from a previous observer after a switch/create/delete.
-        if (observerSaveEpochRef.current !== saveEpoch) {
-          return;
+      void updateObserver(observerToSave).then(
+        () => {
+          // Ignore completions from a previous observer after a switch/create/delete.
+          if (observerSaveEpochRef.current !== saveEpoch) {
+            return;
+          }
+          observerDirtyRef.current = false;
+          setSavedIsError(false);
+          setSaved("Observer saved.");
+        },
+        (caught: unknown) => {
+          if (observerSaveEpochRef.current !== saveEpoch) {
+            return;
+          }
+          setSavedIsError(true);
+          setSaved(caught instanceof Error ? caught.message : "Observer could not be saved.");
         }
-        observerDirtyRef.current = false;
-        setSavedIsError(false);
-        setSaved("Observer saved.");
-      });
+      );
     }, 450);
 
     return () => {

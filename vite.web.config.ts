@@ -9,6 +9,7 @@ const nodeModuleBrowserStub = path.resolve("src/shared/passes/node-module-browse
 
 export default defineConfig({
   root: path.resolve("src/renderer"),
+  base: "./",
   publicDir: path.resolve("public"),
   resolve: {
     alias: {
@@ -44,7 +45,8 @@ export default defineConfig({
         theme_color: "#0c0d10",
         background_color: "#0c0d10",
         display: "standalone",
-        start_url: "/",
+        start_url: ".",
+        scope: ".",
         icons: [
           {
             src: "sat-tracker-icon.svg",
@@ -74,6 +76,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,jpg,jpeg,woff2,json,wasm,webmanifest}"],
+        globIgnores: ["cesium/**/*"],
         maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
         navigateFallback: "index.html",
         runtimeCaching: [
@@ -90,21 +93,6 @@ export default defineConfig({
                 statuses: [0, 200]
               }
             }
-          },
-          {
-            urlPattern: /^https:\/\/celestrak\.org\/.*/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "celestrak-cache",
-              networkTimeoutSeconds: 10,
-              expiration: {
-                maxEntries: 48,
-                maxAgeSeconds: 60 * 60 * 24 * 7
-              },
-              cacheableResponse: {
-                statuses: [0, 200]
-              }
-            }
           }
         ]
       }
@@ -113,7 +101,7 @@ export default defineConfig({
   build: {
     outDir: path.resolve("dist-web"),
     emptyOutDir: true,
-    target: "esnext",
+    target: ["es2022", "chrome109", "edge109", "firefox115", "safari16"],
     chunkSizeWarningLimit: 5000
   },
   server: {

@@ -28,8 +28,13 @@ export function readPassReminders(): PassReminder[] {
 }
 
 function writePassReminders(reminders: PassReminder[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(reminders));
-  window.dispatchEvent(new Event(REMINDERS_CHANGED_EVENT));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(reminders));
+    window.dispatchEvent(new Event(REMINDERS_CHANGED_EVENT));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function hasPassReminder(pass: Pick<PassPrediction, "satelliteId" | "aos">) {
@@ -43,14 +48,15 @@ export function togglePassReminder(pass: PassPrediction, leadMinutes = DEFAULT_R
   const exists = reminders.some((reminder) => passReminderId(reminder) === id);
 
   if (exists) {
-    writePassReminders(reminders.filter((reminder) => passReminderId(reminder) !== id));
-    return false;
+    return writePassReminders(reminders.filter((reminder) => passReminderId(reminder) !== id))
+      ? false
+      : null;
   }
 
   const notifyAt = new Date(
     Math.max(Date.now(), new Date(pass.aos).getTime() - leadMinutes * 60_000)
   ).toISOString();
-  writePassReminders([
+  return writePassReminders([
     ...reminders,
     {
       id,
@@ -60,10 +66,9 @@ export function togglePassReminder(pass: PassPrediction, leadMinutes = DEFAULT_R
       maxElevationDeg: pass.maxElevationDeg,
       notifyAt
     }
-  ]);
-  return true;
+  ]) ? true : null;
 }
 
 export function removePassReminder(id: string) {
-  writePassReminders(readPassReminders().filter((reminder) => reminder.id !== id));
+  return writePassReminders(readPassReminders().filter((reminder) => reminder.id !== id));
 }

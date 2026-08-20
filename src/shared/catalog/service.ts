@@ -1,5 +1,5 @@
 import { fetchCelestrakSatellite, iterateTleSource, refreshSatelliteRecord } from "@/shared/celestrak/client";
-import { db } from "@/shared/db";
+import { db, getSettings, saveSettings } from "@/shared/db";
 import { createSatelliteRecord, parseElementInput } from "@/shared/tle/parser";
 import { SatelliteRecord, TleSource } from "@/shared/types";
 
@@ -19,6 +19,7 @@ export async function upsertSatellite(record: SatelliteRecord) {
 export async function addManualElements(raw: string) {
   const parsed = parseElementInput(raw);
   const record = createSatelliteRecord(parsed, "manual");
+  await restoreSatellite(record.id);
   return upsertSatellite(record);
 }
 
@@ -58,7 +59,17 @@ export function parseNoradIds(raw: string): string[] {
 
 export async function addFromNoradId(noradId: string) {
   const record = await fetchCelestrakSatellite(normalizeNoradId(noradId));
+  await restoreSatellite(record.id);
   return upsertSatellite(record);
+}
+
+async function restoreSatellite(id: string) {
+  const settings = await getSettings();
+  if (settings.hiddenSatelliteIds.includes(id)) {
+    await saveSettings({
+      hiddenSatelliteIds: settings.hiddenSatelliteIds.filter((satelliteId) => satelliteId !== id)
+    });
+  }
 }
 
 export async function addFromNoradIds(raw: string) {
@@ -120,12 +131,13 @@ export async function refreshSatellite(id: string) {
 }
 
 export async function importFromTleSource(source: TleSource) {
+  const hiddenIds = new Set((await getSettings()).hiddenSatelliteIds);
   const seenIds = new Set<string>();
   let batch: SatelliteRecord[] = [];
   let importedCount = 0;
 
   for await (const record of iterateTleSource(source)) {
-    if (seenIds.has(record.id)) {
+    if (seenIds.has(record.id) || hiddenIds.has(record.id)) {
       continue;
     }
     seenIds.add(record.id);
@@ -144,8 +156,15 @@ export async function importFromTleSource(source: TleSource) {
 }
 
 export async function removeSatellite(id: string) {
-  await db.transaction("rw", db.satellites, db.watchlists, async () => {
+  await db.transaction("rw", db.satellites, db.watchlists, db.settings, async () => {
     await db.satellites.delete(id);
+    const settings = await db.settings.get("app");
+    const hiddenIds = settings?.hiddenSatelliteIds ?? [];
+    if (settings && !hiddenIds.includes(id)) {
+      await db.settings.update("app", {
+        hiddenSatelliteIds: [...hiddenIds, id]
+      });
+    }
     const watchlists = await db.watchlists.toArray();
     await Promise.all(
       watchlists

@@ -1485,6 +1485,17 @@ button.radar-target-row:not([data-slot]):hover {
   background: var(--accent-soft);
 }
 
+button.pass-card-select:not([data-slot]) {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

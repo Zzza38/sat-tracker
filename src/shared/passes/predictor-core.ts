@@ -193,8 +193,11 @@ export function predictPassesForSatellite(
     return [];
   }
 
+  // A pass already in progress at the start of the requested window has no
+  // known AOS inside the window. Discard that partial pass instead of
+  // fabricating an AOS at `start`.
   let inPass = previousElevation >= horizonElevationDeg;
-  let passStart: Date | null = inPass ? start : null;
+  let passStart: Date | null = null;
   const stepMs = stepSeconds * 1000;
 
   for (let time = Math.min(start.getTime() + stepMs, end.getTime()); time <= end.getTime();) {
@@ -220,11 +223,13 @@ export function predictPassesForSatellite(
     if (!inPass && !previousAbove && currentlyAbove) {
       inPass = true;
       passStart = refineBoundary(record, observer, previous, current, true, horizonElevationDeg);
-    } else if (inPass && passStart && previousAbove && !currentlyAbove) {
-      const passEnd = refineBoundary(record, observer, previous, current, false, horizonElevationDeg);
-      const pass = buildPass(record, observer, passStart, passEnd, minElevationDeg);
-      if (pass) {
-        passes.push(pass);
+    } else if (inPass && previousAbove && !currentlyAbove) {
+      if (passStart) {
+        const passEnd = refineBoundary(record, observer, previous, current, false, horizonElevationDeg);
+        const pass = buildPass(record, observer, passStart, passEnd, minElevationDeg);
+        if (pass) {
+          passes.push(pass);
+        }
       }
       inPass = false;
       passStart = null;
@@ -243,7 +248,10 @@ export function predictPassesForSatellite(
 }
 
 function csvCell(value: string) {
-  return `"${value.replaceAll('"', '""')}"`;
+  // Spreadsheet applications interpret these prefixes as formulas even in a
+  // quoted CSV cell. An apostrophe preserves the displayed text.
+  const safeValue = /^[\t\r\n ]*[=+\-@]/.test(value) ? `'${value}` : value;
+  return `"${safeValue.replaceAll('"', '""')}"`;
 }
 
 function icsText(value: string) {
@@ -290,18 +298,39 @@ export function passesToCsv(passes: PassPrediction[]) {
 }
 
 export function passesToIcs(passes: PassPrediction[], observerName: string) {
+  const dtstamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const foldLine = (line: string) => {
+    const chunks: string[] = [];
+    let current = "";
+    let currentBytes = 0;
+    for (const character of line) {
+      const bytes = new TextEncoder().encode(character).length;
+      const limit = chunks.length === 0 ? 75 : 74;
+      if (current && currentBytes + bytes > limit) {
+        chunks.push(current);
+        current = character;
+        currentBytes = bytes;
+      } else {
+        current += character;
+        currentBytes += bytes;
+      }
+    }
+    chunks.push(current);
+    return chunks.join("\r\n ");
+  };
   const events = passes
     .map((pass) => {
       const uid = `${pass.satelliteId}-${pass.aos}`;
       return [
         "BEGIN:VEVENT",
         `UID:${icsText(uid)}`,
+        `DTSTAMP:${dtstamp}`,
         `DTSTART:${pass.aos.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")}`,
         `DTEND:${pass.los.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")}`,
         `SUMMARY:${icsText(`${pass.satelliteName} pass over ${observerName}`)}`,
         `DESCRIPTION:Max elevation ${pass.maxElevationDeg.toFixed(1)} deg`,
         "END:VEVENT"
-      ].join("\r\n");
+      ].map(foldLine).join("\r\n");
     })
     .join("\r\n");
 

@@ -9,11 +9,6 @@ import {
   isWindowControlAction
 } from "./ipc-contract";
 
-const TRUSTED_RENDERER_HOSTS = new Set([
-  "desktop-zion",
-  "desktop-zion.tail4dd51a.ts.net"
-]);
-
 const windowDragStarts = new Map<number, {
   pointerScreenX: number;
   pointerScreenY: number;
@@ -32,14 +27,7 @@ function isAllowedRendererUrl(rawUrl: string) {
     const url = new URL(rawUrl);
     if (process.env.ELECTRON_RENDERER_URL) {
       const configuredRenderer = new URL(process.env.ELECTRON_RENDERER_URL);
-      return (
-        url.origin === configuredRenderer.origin ||
-        (
-          url.protocol === configuredRenderer.protocol &&
-          url.port === configuredRenderer.port &&
-          TRUSTED_RENDERER_HOSTS.has(url.hostname.toLowerCase())
-        )
-      );
+      return url.origin === configuredRenderer.origin;
     }
 
     const rendererDirectory = path.resolve(__dirname, "../renderer");
@@ -94,16 +82,31 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
-  app.setAppUserModelId("com.sattracker.app");
-  createWindow();
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.focus();
     }
   });
-});
+
+  app.whenReady().then(() => {
+    app.setAppUserModelId("com.sattracker.app");
+    createWindow();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  });
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
