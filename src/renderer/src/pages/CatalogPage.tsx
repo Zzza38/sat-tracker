@@ -21,7 +21,8 @@ export function CatalogPage() {
     addManualTle,
     addNorad,
     addNoradBulk,
-    toggleWatchlist
+    toggleWatchlist,
+    removeCatalogSatellite
   } = useApp();
   const [query, setQuery] = useState("");
   const [noradId, setNoradId] = useState("");
@@ -143,6 +144,21 @@ export function CatalogPage() {
         next.delete(id);
         return next;
       });
+    }
+  }
+
+  async function deleteSatellite(id: string, name: string) {
+    if (!window.confirm(`Remove ${name} from this catalog? You can add it again later.`)) {
+      return;
+    }
+    setStatus(null);
+    try {
+      await removeCatalogSatellite(id);
+      setStatusIsError(false);
+      setStatus(`${name} removed from the catalog.`);
+    } catch (caught) {
+      setStatusIsError(true);
+      setStatus(caught instanceof Error ? caught.message : "Satellite could not be removed.");
     }
   }
 
@@ -409,6 +425,7 @@ export function CatalogPage() {
                     <TleFreshnessBadge satellite={record} />
                   </div>
                 </button>
+                <div className="flex shrink-0 flex-col gap-2">
                 <Button
                   className="w-[92px] shrink-0"
                   variant={tracked ? "default" : "secondary"}
@@ -419,6 +436,10 @@ export function CatalogPage() {
                 >
                   {tracked ? "Tracking" : "Track"}
                 </Button>
+                <Button variant="ghost" size="sm" onClick={() => void deleteSatellite(record.id, record.name)}>
+                  Remove
+                </Button>
+                </div>
               </div>
             );
           })
@@ -489,6 +510,13 @@ export function CatalogPage() {
                           onClick={() => void toggleTracking(record.id)}
                         >
                           {tracked ? "Tracking" : "Track"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void deleteSatellite(record.id, record.name)}
+                        >
+                          Remove
                         </Button>
                       </div>
                     </td>

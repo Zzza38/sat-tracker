@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist*", "out", "node_modules", "public/cesium"]
+    ignores: ["dist*", "out", "node_modules", "public/cesium", "release", "test-results"]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

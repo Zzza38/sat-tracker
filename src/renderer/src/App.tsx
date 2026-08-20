@@ -4,6 +4,7 @@ import { Layout } from "./components/Layout";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { useApp } from "./context/AppContext";
 import { useOnlineStatus } from "./hooks/useOnlineStatus";
+import { isElectronRuntime } from "./lib/platform";
 
 const CatalogPage = lazy(() => import("./pages/CatalogPage").then((module) => ({ default: module.CatalogPage })));
 const ArPage = lazy(() => import("./pages/ArPage").then((module) => ({ default: module.ArPage })));
@@ -15,6 +16,10 @@ const TrackerPage = lazy(() => import("./pages/TrackerPage").then((module) => ({
 export default function App() {
   const { page, error, clearError, bootstrapping, refreshCatalog } = useApp();
   const online = useOnlineStatus();
+  const analyticsEnabled =
+    !isElectronRuntime() &&
+    import.meta.env.PROD &&
+    !["localhost", "127.0.0.1"].includes(window.location.hostname);
 
   const content = {
     catalog: <CatalogPage />,
@@ -58,7 +63,7 @@ export default function App() {
           {content}
         </Suspense>
       )}
-      <Analytics />
+      {analyticsEnabled ? <Analytics /> : null}
     </Layout>
   );
 }

@@ -1,5 +1,17 @@
 export const MAX_SAVE_FILE_CONTENT_LENGTH = 10_000_000;
 
+function isSafeDefaultFileName(value: string) {
+  const windowsReservedName = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+  return (
+    value.length > 0 &&
+    value.length <= 255 &&
+    !/[<>:"/\\|?*]/.test(value) &&
+    !Array.from(value).some((character) => character.charCodeAt(0) < 32) &&
+    !/[. ]$/.test(value) &&
+    !windowsReservedName.test(value)
+  );
+}
+
 export function isWindowControlAction(value: unknown): value is "minimize" | "maximize" | "close" {
   return value === "minimize" || value === "maximize" || value === "close";
 }
@@ -23,8 +35,7 @@ export function isValidSaveFileRequest(content: unknown, defaultName: unknown) {
     typeof content === "string" &&
     content.length <= MAX_SAVE_FILE_CONTENT_LENGTH &&
     typeof defaultName === "string" &&
-    defaultName.length > 0 &&
-    defaultName.length <= 255
+    isSafeDefaultFileName(defaultName)
   );
 }
 

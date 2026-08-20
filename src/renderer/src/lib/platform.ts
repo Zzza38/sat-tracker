@@ -24,18 +24,32 @@ export async function notifyPass(title: string, body: string) {
     return window.electronAPI.showNotification(title, body);
   }
 
-  if ("Notification" in window) {
-    if (Notification.permission === "default") {
-      await Notification.requestPermission();
-    }
+  if (!("Notification" in window)) {
+    return false;
+  }
+  if (Notification.permission === "default") {
+    await Notification.requestPermission();
+  }
+  if (Notification.permission !== "granted") {
+    return false;
+  }
 
-    if (Notification.permission === "granted") {
-      new Notification(title, { body });
+  // Android exposes Notification but deliberately makes its constructor
+  // illegal. Service-worker notifications are the portable web path.
+  if ("serviceWorker" in navigator) {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (registration) {
+      await registration.showNotification(title, { body });
       return true;
     }
   }
 
-  return false;
+  try {
+    new Notification(title, { body });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function requestNotificationPermission() {

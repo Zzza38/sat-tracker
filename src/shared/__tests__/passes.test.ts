@@ -66,8 +66,7 @@ describe("pass predictor", () => {
   });
 
   it("isolates records without usable orbital elements in bulk prediction", async () => {
-    await expect(
-      predictPassesBulkWasm(
+    const passes = await predictPassesBulkWasm(
         [
           record,
           {
@@ -84,8 +83,10 @@ describe("pass predictor", () => {
           end: new Date("2019-06-05T01:00:00Z"),
           stepSeconds: 60
         }
-      )
-    ).resolves.toEqual(expect.any(Array));
+      );
+
+    expect(passes.every((pass) => pass.satelliteId === record.id)).toBe(true);
+    expect(passes.some((pass) => pass.satelliteId === "invalid")).toBe(false);
   });
 
   it("does not fabricate LOS when the prediction window ends during a pass", () => {
@@ -106,6 +107,25 @@ describe("pass predictor", () => {
     expect(clipped).toEqual([]);
   });
 
+  it("does not fabricate AOS when the prediction window starts during a pass", () => {
+    const passes = predictPassesForSatellite(record, DEFAULT_OBSERVER, {
+      start: new Date("2019-06-05T00:00:00Z"),
+      end: new Date("2019-06-07T00:00:00Z"),
+      minElevationDeg: 5,
+      stepSeconds: 30
+    });
+    const first = passes[0];
+    const clipped = predictPassesForSatellite(record, DEFAULT_OBSERVER, {
+      start: new Date((new Date(first.aos).getTime() + new Date(first.los).getTime()) / 2),
+      end: new Date("2019-06-07T00:00:00Z"),
+      minElevationDeg: 5,
+      stepSeconds: 30
+    });
+
+    expect(clipped.length).toBeGreaterThan(0);
+    expect(new Date(clipped[0].aos).getTime()).toBeGreaterThan(new Date(first.los).getTime());
+  });
+
   it("escapes CSV and ICS text fields", () => {
     const [pass] = predictPassesForSatellite(record, DEFAULT_OBSERVER, {
       start: new Date("2019-06-05T00:00:00Z"),
@@ -119,5 +139,23 @@ describe("pass predictor", () => {
     expect(passesToIcs([namedPass], "Site, One")).toContain(
       "SUMMARY:SAT\\, \"ONE\"\\;\\nNEXT pass over Site\\, One"
     );
+  });
+
+  it("neutralizes spreadsheet formulas and emits standards-compliant ICS events", () => {
+    const [pass] = predictPassesForSatellite(record, DEFAULT_OBSERVER, {
+      start: new Date("2019-06-05T00:00:00Z"),
+      end: new Date("2019-06-07T00:00:00Z"),
+      minElevationDeg: 5,
+      stepSeconds: 30
+    });
+    const dangerous = { ...pass, satelliteName: `=HYPERLINK("https://example.com")${"é".repeat(80)}` };
+    const csv = passesToCsv([dangerous]);
+    const ics = passesToIcs([dangerous], "Observer");
+
+    expect(csv).toContain(`"'=HYPERLINK`);
+    expect(ics).toMatch(/\r\nDTSTAMP:\d{8}T\d{6}Z\r\n/);
+    for (const line of ics.split("\r\n")) {
+      expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75);
+    }
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchCelestrakSatellite, fetchTleSource } from "@/shared/celestrak/client";
+import { fetchCelestrakSatellite, fetchTleSource, validateRemoteUrl } from "@/shared/celestrak/client";
 import { ISS_OMM } from "@/shared/__tests__/fixtures";
 
 afterEach(() => {
@@ -36,6 +36,20 @@ describe("CelesTrak client", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "http://[::1]/tle",
+    "http://[0:0:0:0:0:0:0:1]/tle",
+    "http://[::ffff:127.0.0.1]/tle",
+    "http://[fd00::1]/tle",
+    "http://[fe80::1]/tle"
+  ])("blocks private IPv6 source %s", (url) => {
+    expect(() => validateRemoteUrl(url)).toThrow(/local or private-network/);
+  });
+
+  it("allows public IPv6 sources", () => {
+    expect(validateRemoteUrl("https://[2606:4700:4700::1111]/tle").hostname).toBe("[2606:4700:4700::1111]");
+  });
+
   it("streams JSON source records", async () => {
     vi.stubGlobal(
       "fetch",
@@ -55,5 +69,6 @@ describe("CelesTrak client", () => {
     });
 
     expect(records.map((record) => record.id)).toEqual(["25544", "25545"]);
+    expect(records.every((record) => record.source === "celestrak")).toBe(true);
   });
 });

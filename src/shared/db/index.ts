@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS: SettingsRow = {
   tleSources: DEFAULT_TLE_SOURCES,
   defaultTleSourceId: "stations",
   trackOnAdd: false,
+  hiddenSatelliteIds: [],
   satelliteColors: {},
   activeObserverId: DEFAULT_OBSERVER.id
 };
@@ -44,14 +45,20 @@ interface LegacySettingsRow {
 
 function migrateSettings(settings: SettingsRow & LegacySettingsRow): SettingsRow {
   const next = { ...settings };
+  const legacyDefaultSourceIds = new Set(["stations", "active", "visual", "last-30-days", "weather", "science"]);
 
   if (next.refreshIntervalValue === undefined && next.refreshIntervalHours !== undefined) {
     next.refreshIntervalValue = next.refreshIntervalHours;
     next.refreshIntervalUnit = "hours";
   }
 
-  if (!next.tleSources?.length) {
+  if (
+    !next.tleSources?.length ||
+    (next.tleSources.length === legacyDefaultSourceIds.size &&
+      next.tleSources.every((source) => legacyDefaultSourceIds.has(source.id)))
+  ) {
     next.tleSources = DEFAULT_TLE_SOURCES;
+    next.defaultTleSourceId = DEFAULT_TLE_SOURCES[0].id;
   }
 
   if (!next.defaultTleSourceId) {
@@ -62,6 +69,10 @@ function migrateSettings(settings: SettingsRow & LegacySettingsRow): SettingsRow
 
   if (next.trackOnAdd === undefined) {
     next.trackOnAdd = false;
+  }
+
+  if (!Array.isArray(next.hiddenSatelliteIds)) {
+    next.hiddenSatelliteIds = [];
   }
 
   if (!next.satelliteColors) {

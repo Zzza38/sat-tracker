@@ -17,7 +17,10 @@ describe("IPC contract", () => {
   it("bounds save-file payloads and names", () => {
     expect(isValidSaveFileRequest("content", "passes.csv")).toBe(true);
     expect(isValidSaveFileRequest("x".repeat(MAX_SAVE_FILE_CONTENT_LENGTH + 1), "passes.csv")).toBe(false);
-    expect(isValidSaveFileRequest("content", "../".repeat(100))).toBe(false);
+    expect(isValidSaveFileRequest("content", "../passes.csv")).toBe(false);
+    expect(isValidSaveFileRequest("content", "..\\passes.csv")).toBe(false);
+    expect(isValidSaveFileRequest("content", "CON.txt")).toBe(false);
+    expect(isValidSaveFileRequest("content", "passes.csv.")).toBe(false);
   });
 
   it("bounds notification fields", () => {

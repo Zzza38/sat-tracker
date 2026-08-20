@@ -1,12 +1,11 @@
 import { RefreshIntervalUnit, TleSource } from "@/shared/types";
 
 export const DEFAULT_TLE_SOURCES: TleSource[] = [
-  createUrlTleSource("https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=JSON", "stations"),
-  createUrlTleSource("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=JSON", "active"),
-  createUrlTleSource("https://celestrak.org/NORAD/elements/gp.php?GROUP=visual&FORMAT=JSON", "visual"),
-  createUrlTleSource("https://celestrak.org/NORAD/elements/gp.php?GROUP=last-30-days&FORMAT=JSON", "last-30-days"),
-  createUrlTleSource("https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=JSON", "weather"),
-  createUrlTleSource("https://celestrak.org/NORAD/elements/gp.php?GROUP=science&FORMAT=JSON", "science")
+  createUrlTleSource(
+    "https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=JSON",
+    "stations",
+    "Space stations"
+  )
 ];
 
 export function refreshIntervalToHours(value: number, unit: RefreshIntervalUnit) {
@@ -24,10 +23,10 @@ export function createTleSourceId() {
   return `source-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function createUrlTleSource(url: string, id = createTleSourceId()): TleSource {
+export function createUrlTleSource(url: string, id = createTleSourceId(), name = url): TleSource {
   return {
     id,
-    name: url,
+    name,
     endpoint: "url",
     url
   };

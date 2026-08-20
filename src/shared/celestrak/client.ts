@@ -5,6 +5,65 @@ const GP_ENDPOINT = "https://celestrak.org/NORAD/elements/gp.php";
 const SUP_GP_ENDPOINT = "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php";
 const FETCH_TIMEOUT_MS = 15000;
 
+function isPrivateIpv4(hostname: string) {
+  const octets = hostname.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return false;
+  }
+  const [first, second] = octets;
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    (first === 198 && (second === 18 || second === 19)) ||
+    first >= 224
+  );
+}
+
+function expandIpv6(hostname: string) {
+  const host = hostname.replace(/^\[|\]$/g, "");
+  if (!host.includes(":")) {
+    return null;
+  }
+  const [leftRaw, rightRaw = ""] = host.split("::");
+  if (host.split("::").length > 2) {
+    return null;
+  }
+  const parseSide = (side: string) => side ? side.split(":").map((part) => Number.parseInt(part, 16)) : [];
+  const left = parseSide(leftRaw);
+  const right = parseSide(rightRaw);
+  if ([...left, ...right].some((part) => !Number.isInteger(part) || part < 0 || part > 0xffff)) {
+    return null;
+  }
+  const missing = 8 - left.length - right.length;
+  if ((host.includes("::") && missing < 1) || (!host.includes("::") && missing !== 0)) {
+    return null;
+  }
+  return [...left, ...Array(Math.max(missing, 0)).fill(0), ...right];
+}
+
+function isPrivateIpv6(hostname: string) {
+  const words = expandIpv6(hostname);
+  if (!words) {
+    return false;
+  }
+  const allZeroPrefix = words.slice(0, 7).every((word) => word === 0);
+  const first = words[0];
+  const embeddedIpv4 = `${words[6] >> 8}.${words[6] & 0xff}.${words[7] >> 8}.${words[7] & 0xff}`;
+  return (
+    (allZeroPrefix && (words[7] === 0 || words[7] === 1)) ||
+    (first & 0xfe00) === 0xfc00 ||
+    (first & 0xffc0) === 0xfe80 ||
+    (first & 0xffc0) === 0xfec0 ||
+    (first & 0xff00) === 0xff00 ||
+    (words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff && isPrivateIpv4(embeddedIpv4))
+  );
+}
+
 export function validateRemoteUrl(rawUrl: string) {
   const url = new URL(rawUrl);
   if (url.protocol !== "https:" && url.protocol !== "http:") {
@@ -12,17 +71,11 @@ export function validateRemoteUrl(rawUrl: string) {
   }
 
   const hostname = url.hostname.toLowerCase();
-  const privateIpv4 =
-    /^(?:10|127)\./.test(hostname) ||
-    /^192\.168\./.test(hostname) ||
-    /^169\.254\./.test(hostname) ||
-    /^172\.(?:1[6-9]|2\d|3[01])\./.test(hostname);
   if (
     hostname === "localhost" ||
-    hostname === "::1" ||
-    hostname === "0.0.0.0" ||
     hostname.endsWith(".local") ||
-    privateIpv4
+    isPrivateIpv4(hostname) ||
+    isPrivateIpv6(hostname)
   ) {
     throw new Error("Custom TLE sources cannot target local or private-network addresses.");
   }
@@ -68,7 +121,7 @@ function parseJsonEntries(raw: string, sourceName: string) {
 
 function recordFromJson(raw: string, sourceName: string) {
   try {
-    return createSatelliteRecord(parseElementInput(raw), "seed");
+    return createSatelliteRecord(parseElementInput(raw), "celestrak");
   } catch (caught) {
     const detail = caught instanceof Error ? caught.message : "Invalid JSON record.";
     throw new Error(`"${sourceName}" returned invalid OMM JSON: ${detail}`, { cause: caught });
@@ -242,7 +295,7 @@ export async function* iterateTleSource(source: TleSource) {
   }
 
   for (const entry of parseTleCatalog(raw)) {
-    yield createSatelliteRecord(parseElementInput(entry), "seed");
+    yield createSatelliteRecord(parseElementInput(entry), "celestrak");
   }
 }
 

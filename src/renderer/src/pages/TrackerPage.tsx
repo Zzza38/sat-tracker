@@ -342,8 +342,14 @@ export function TrackerPage() {
     }
   }, [trackedListExpanded, trackedSatellites.length]);
 
-  const focusSatellite = selectedSatellite ?? visibleSatellites[0];
-  const selectedTrackedSatellite = trackedSatellites.find((satellite) => satellite.id === focusSatellite?.id);
+  const requestedFocusSatellite = selectedSatellite ?? visibleSatellites[0];
+  const selectedTrackedSatellite = trackedSatellites.find(
+    (satellite) => satellite.id === requestedFocusSatellite?.id
+  );
+  const fallbackTrackedSatellite = selectedTrackedSatellite ?? trackedSatellites[0];
+  const focusSatellite = visibleSatellites.find(
+    (satellite) => satellite.id === fallbackTrackedSatellite?.id
+  );
   const selectedSnapshot = useMemo(() => {
     if (!focusSatellite) {
       return null;
@@ -533,27 +539,27 @@ export function TrackerPage() {
 
   if (watchlistIds.length === 0 || !focusSatellite || !selectedSnapshot || trackedSatellites.length === 0) {
     const propagationFailed =
-      watchlistIds.length > 0 && Boolean(focusSatellite) && (!selectedSnapshot || trackedSatellites.length === 0);
+      watchlistIds.length > 0 && trackedSatellites.length === 0;
     return (
       <div className="panel p-8">
         <h1 className="text-2xl font-semibold tracking-tight text-[var(--text)]">Live tracker</h1>
         <p className="mt-2 text-[var(--muted)]">
           {propagationFailed
-            ? `Could not propagate ${focusSatellite?.name ?? "the selected satellite"}. Its orbital elements may be stale or the object may have decayed - try "Update orbit data" on the Details page, or select another satellite.`
+            ? "None of the tracked satellites could be propagated. Their orbital elements may be stale or the objects may have decayed."
             : "Track a satellite in Catalog to start live tracking."}
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
-          {propagationFailed && focusSatellite ? (
+          {propagationFailed && requestedFocusSatellite ? (
             <>
               <Button
                 onClick={() => {
-                  selectSatellite(focusSatellite.id);
+                  selectSatellite(requestedFocusSatellite.id);
                   setPage("details");
                 }}
               >
                 Open in Details
               </Button>
-              {focusSatellite.id === selectedSatelliteId ? (
+              {requestedFocusSatellite.id === selectedSatelliteId ? (
                 <Button
                   variant="secondary"
                   title="Fetch fresh two-line elements (TLE) for this satellite"

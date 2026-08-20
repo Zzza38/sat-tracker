@@ -15,6 +15,7 @@ describe("offline seed catalog", () => {
 
     for (const record of records) {
       expect(record.source).toBe("seed");
+      expect(record.fetchedAt).toBe(record.epoch);
       expect(record.id).toBe(record.noradId);
       expect(record.tle?.line1.startsWith("1 ")).toBe(true);
       expect(record.tle?.line2.startsWith("2 ")).toBe(true);

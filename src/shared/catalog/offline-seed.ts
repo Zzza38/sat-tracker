@@ -36,7 +36,15 @@ export const OFFLINE_SEED_TLES = [
 ] as const;
 
 export function buildOfflineSeedRecords() {
-  return OFFLINE_SEED_TLES.map((raw) => createSatelliteRecord(parseElementInput(raw), "seed"));
+  return OFFLINE_SEED_TLES.map((raw) => {
+    const parsed = parseElementInput(raw);
+    return {
+      ...createSatelliteRecord(parsed, "seed"),
+      // This is a bundled snapshot, not a network fetch performed at startup.
+      // Preserve its actual element age so reconnecting triggers recovery.
+      fetchedAt: parsed.epoch ?? new Date(0).toISOString()
+    };
+  });
 }
 
 /** Insert the bundled starter catalog when the local DB has no satellites. */

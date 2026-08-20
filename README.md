@@ -1,105 +1,103 @@
-<img src="public/sat-tracker-icon.svg" height="100px">
+<img src="public/sat-tracker-icon.svg" height="100" alt="Sat Tracker logo">
 
 # Sat Tracker
 
-All-in-one satellite tracking app built with TypeScript, React, satellite.js, and Cesium. It runs in the browser and as an Electron desktop app from the same codebase.
+Track satellites in real time, predict passes over your location, and find
+objects in the sky with the mobile AR view. Sat Tracker runs as a hosted web
+app, an installable PWA, and a desktop Electron app.
 
-Test it out [here](https://sat-tracker.ziona.dev)!
+- **Web app:** https://sat-tracker.ziona.dev
+- **Desktop downloads:** https://github.com/Zzza38/sat-tracker/releases/latest
+- **Changes in 1.1.0:** [CHANGELOG.md](CHANGELOG.md)
+
+## Install a desktop release
+
+Open the latest GitHub Release and choose the file for your platform:
+
+- Windows 10/11 x64: setup `.exe` or portable `.exe`
+- macOS 12+ on Intel or Apple silicon: `.dmg` or `.zip`
+- Linux x64: `.AppImage` or `.deb`
+
+The current community builds are not code-signed or notarized. Windows may
+show SmartScreen and macOS may require **Control-click → Open**. Sat Tracker
+does not include an auto-updater, so install new releases from GitHub.
 
 ## Features
 
 - Manual TLE, 3LE, and OMM JSON ingestion
-- CelesTrak auto-fetch by NORAD ID or curated groups
-- Live propagation with look angles, sun/shadow state, and ground tracks
-- Pass prediction with AOS, LOS, TCA, azimuth arcs, sky plot, and elevation chart
-- 2D map tracker with optional lazy-loaded 3D Cesium globe
-- IndexedDB persistence for satellites, observer sites, watchlists, and settings
-- Offline mode: installable web app with cached assets, self-hosted fonts, and a bundled starter catalog
-- CSV and ICS export, plus native save dialogs in Electron
+- CelesTrak fetch by NORAD ID or configurable source URL
+- Live propagation, look angles, ground tracks, and sun/shadow state
+- Pass prediction with AOS, LOS, TCA, sky plots, charts, CSV, and ICS export
+- 2D map and lazy-loaded Cesium 3D globe
+- Mobile AR sky finder with camera and compass calibration
+- Multiple observer sites, watchlists, satellite colors, and local persistence
+- Installable PWA with cached app assets and a bundled offline starter catalog
 
-## Scripts
+Pass alerts are local convenience reminders, not an alarm service. Sat Tracker
+must remain open, and browser or OS power-saving rules may pause delivery.
 
-```bash
-npm run dev             # Electron dev app
-npm run dev:web         # Web-only dev server
-npm run build           # Electron + web production builds
-npm run build:web       # Static web build in dist-web/
-npm run build:electron
-npm run lint
-npm run typecheck
-npm run test
-npm run test:watch
-```
+## Data, offline behavior, and privacy
 
-## Desktop builds
+Satellite data is fetched directly from `celestrak.org` and stored locally in
+IndexedDB. SGP4 accuracy depends on element age, so refresh stale data before
+relying on a pass prediction. The starter catalog is intentionally marked with
+its bundled epoch and refreshes as soon as connectivity returns.
 
-Build both Windows desktop artifacts:
+The hosted web app uses Vercel Analytics. Desktop builds do not load analytics.
+There is no Sat Tracker backend, account system, or cloud database.
 
-```bash
-npm run dist
-```
+The web build supports Chrome/Edge 109+, Firefox 115+, and Safari 16+. Camera,
+orientation, notification, and PWA features still depend on platform support
+and permissions.
 
-The generated files are written to `release/`:
+## Development
 
-- `Sat Tracker Setup 1.0.0.exe` installer
-- `Sat Tracker 1.0.0.exe` portable executable
-
-You can also build them separately:
+Requires Node.js 24 and pnpm 11.
 
 ```bash
-npm run dist:installer
-npm run dist:portable
-npm run dist:mac
-npm run dist:linux
+corepack enable
+pnpm install --frozen-lockfile
+pnpm dev             # Electron development app
+pnpm dev:web         # Web app at http://localhost:5173
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm test:e2e
 ```
 
-CI builds desktop artifacts on Windows, macOS, and Linux. Open the latest `CI` workflow run and download the platform artifact you need:
-
-- `sat-tracker-windows`
-- `sat-tracker-macos`
-- `sat-tracker-linux`
-
-## Web deploy
-
-Build the static site:
+Desktop packaging:
 
 ```bash
-npm run build:web
+pnpm dist:win
+pnpm dist:mac
+pnpm dist:linux
 ```
 
-Serve `dist-web/` behind Caddy, nginx, or any static file host. The build copies Cesium assets into `dist-web/cesium/`.
+Artifacts are written to `release/`. A tag matching `v*` runs the release
+workflow, builds all desktop platforms, and publishes durable GitHub Release
+assets. The package version and tag must match, for example package `1.1.0`
+with tag `v1.1.0`.
 
-Example Caddy snippet:
+## Static web hosting
+
+```bash
+pnpm build:web
+```
+
+Publish `dist-web/` from a root domain or URL subdirectory. The generated asset
+paths, manifest scope, and PWA start URL are relative. Configure SPA fallback
+to `index.html`.
 
 ```caddy
 sat.example.com {
   root * /var/www/sat-tracker/dist-web
-  file_server
   try_files {path} /index.html
+  file_server
 }
 ```
 
-## Electron
+## License
 
-Production Electron builds output to `out/`:
-
-- `out/main/index.js`
-- `out/preload/index.mjs`
-- `out/renderer/index.html`
-
-Packaged desktop builds output platform artifacts to `release/`.
-
-## Observer workflow
-
-1. Open **Settings** and set your ground station latitude, longitude, altitude, and minimum elevation.
-2. Add satellites in **Catalog** by NORAD ID, manual TLE paste, or CelesTrak group import.
-3. Use **Passes** to compute upcoming visible passes for your watchlist.
-4. Open **Tracker** for live position and ground track visualization.
-5. Use **Details** for orbital elements and current look angles.
-
-## Notes
-
-- CelesTrak GP data is fetched directly from `celestrak.org`.
-- OMM JSON is stored internally so the app can handle larger catalog numbers as TLE-only sources age out.
-- SGP4 accuracy depends on TLE freshness; configure the automatic refresh interval in Settings.
-- After the first online visit, the web build registers a service worker so the app shell, fonts, map assets, and previously synced catalog data keep working offline. A first offline launch uses a bundled starter catalog (ISS, HST, weather birds, and more); paste TLEs anytime without a network.
+Sat Tracker is available under the [ISC License](LICENSE). Runtime dependency
+attribution is recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

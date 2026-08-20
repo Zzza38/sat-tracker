@@ -7,6 +7,7 @@ import {
   importFromTleSource,
   listSatellites,
   refreshSatellite,
+  removeSatellite,
   toggleWatchlistSatellite
 } from "@/shared/catalog/service";
 import { isBrowserOnline, seedOfflineCatalog } from "@/shared/catalog/offline-seed";
@@ -90,6 +91,7 @@ interface AppContextValue {
   importTleSource: (sourceId: string) => Promise<void>;
   refreshSelectedSatellite: () => Promise<void>;
   toggleWatchlist: (satelliteId: string) => Promise<string[]>;
+  removeCatalogSatellite: (satelliteId: string) => Promise<void>;
   selectObserver: (observerId: string) => Promise<void>;
   updateObserver: (observer: ObserverSite) => Promise<void>;
   deleteObserver: (observerId: string) => Promise<void>;
@@ -145,7 +147,7 @@ async function fetchInitialSources(
   }
 }
 
-function catalogNeedsRefresh(
+export function catalogNeedsRefresh(
   records: SatelliteRecord[],
   appSettings: Awaited<ReturnType<typeof getSettings>>
 ) {
@@ -159,10 +161,15 @@ function catalogNeedsRefresh(
     return true;
   }
 
+  const fetchedRecords = records.filter((record) => record.source !== "seed");
+  if (!appSettings.initialSourcesFetched || fetchedRecords.length === 0) {
+    return true;
+  }
+
   const refreshMs =
     refreshIntervalToHours(appSettings.refreshIntervalValue, appSettings.refreshIntervalUnit) * 60 * 60 * 1000;
   const oldestFetch = Math.min(
-    ...records.map((record) => new Date(record.fetchedAt).getTime()).filter(Number.isFinite)
+    ...fetchedRecords.map((record) => new Date(record.fetchedAt).getTime()).filter(Number.isFinite)
   );
 
   return !Number.isFinite(oldestFetch) || Date.now() - oldestFetch >= refreshMs;
@@ -394,6 +401,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       tleSources: DEFAULT_TLE_SOURCES,
       defaultTleSourceId: "stations",
       trackOnAdd: false,
+      hiddenSatelliteIds: [],
       satelliteColors: {},
       activeObserverId: DEFAULT_OBSERVER.id
     },
@@ -462,6 +470,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         selectSatellite(ids[0] ?? null);
       }
       return ids;
+    },
+    removeCatalogSatellite: async (satelliteId) => {
+      await removeSatellite(satelliteId);
+      await refreshCatalog({ silent: true });
     },
     selectObserver: async (observerId) => {
       const selectionEpoch = ++observerSelectionEpochRef.current;

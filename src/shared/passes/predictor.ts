@@ -36,9 +36,8 @@ export class PassPredictionCancelledError extends Error {
 }
 
 // Abort an in-flight prediction: reject its pending promise so the awaiting
-// caller unwinds, and tell the worker to drop the job (a queued job no-ops at
-// the head of the queue via the latest-id guard; a running WASM job can't be
-// interrupted but its result is discarded). Safe to call with an unknown id.
+// caller unwinds, and tell the worker to drop a queued job or discard a running
+// job's result. Safe to call with an unknown id.
 export function cancelPassPrediction(id: number) {
   const pending = pendingRequests.get(id);
   if (!pending) {
@@ -64,7 +63,7 @@ function getWorker() {
 
     worker.onmessage = (event: MessageEvent<{
       id: number;
-      type?: "progress" | "complete";
+      type?: "progress" | "complete" | "cancelled";
       passes?: PassPrediction[];
       error?: string;
       completed?: number;
@@ -85,7 +84,9 @@ function getWorker() {
       }
 
       pendingRequests.delete(event.data.id);
-      if (event.data.error) {
+      if (event.data.type === "cancelled") {
+        pending.reject(new PassPredictionCancelledError());
+      } else if (event.data.error) {
         pending.reject(new Error(event.data.error));
       } else {
         pending.resolve(event.data.passes ?? []);
@@ -242,7 +243,10 @@ export async function predictPassesBulk(
           reject(caught instanceof Error ? caught : new Error("Pass prediction worker failed."));
         }
       });
-    } catch {
+    } catch (caught) {
+      if (caught instanceof PassPredictionCancelledError) {
+        throw caught;
+      }
       worker?.terminate();
       worker = null;
       passes = await predictWithoutWorker(records, observer, options);
@@ -310,7 +314,10 @@ export async function predictPassesBulkStreaming(
           reject(caught instanceof Error ? caught : new Error("Pass prediction worker failed."));
         }
       });
-    } catch {
+    } catch (caught) {
+      if (caught instanceof PassPredictionCancelledError) {
+        throw caught;
+      }
       worker?.terminate();
       worker = null;
       passes = await predictWithoutWorkerStreaming(records, observer, options, onProgress);
