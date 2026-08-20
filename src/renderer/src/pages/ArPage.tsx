@@ -925,7 +925,6 @@ export function ArPage() {
             onPointerMove={(event) => event.stopPropagation()}
             onWheel={(event) => event.stopPropagation()}
           >
-            {import.meta.env.DEV ? <>
             <div className="ar-settings-heading">
               <div>
                 <span className="label">Pointing setup</span>
@@ -1031,44 +1030,47 @@ export function ArPage() {
               trim until the overlay heading matches it.
             </p>
 
-            <div className="ar-settings-heading">
-              <div>
-                <span className="label">Troubleshooting · temporary</span>
-                <strong>Sensor debug log</strong>
-              </div>
-              <span className="mono">
-                {debugMode ? `${arDebugEntryCount().toLocaleString()} ev` : "off"}
-              </span>
-            </div>
-            <div className="ar-debug-actions">
-              <button type="button" onClick={toggleDebugMode}>
-                <Bug size={14} />
-                {debugMode ? "Disable logging" : "Enable logging"}
-              </button>
-              {debugMode ? (
-                <>
-                  <button type="button" onClick={() => void handleExportDebug()}>
-                    <Download size={14} />
-                    Export
+            {import.meta.env.DEV ? (
+              <>
+                <div className="ar-settings-heading">
+                  <div>
+                    <span className="label">Troubleshooting · temporary</span>
+                    <strong>Sensor debug log</strong>
+                  </div>
+                  <span className="mono">
+                    {debugMode ? `${arDebugEntryCount().toLocaleString()} ev` : "off"}
+                  </span>
+                </div>
+                <div className="ar-debug-actions">
+                  <button type="button" onClick={toggleDebugMode}>
+                    <Bug size={14} />
+                    {debugMode ? "Disable logging" : "Enable logging"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      clearArDebugLog();
-                      showToast("Debug log cleared");
-                    }}
-                  >
-                    <Trash2 size={14} />
-                    Clear
-                  </button>
-                </>
-              ) : null}
-            </div>
-            <p>
-              Records the raw sensor stream and every compass-fusion decision. Tap the floating
-              POI button the instant the view misbehaves, then export the log as JSON.
-            </p>
-            </> : null}
+                  {debugMode ? (
+                    <>
+                      <button type="button" onClick={() => void handleExportDebug()}>
+                        <Download size={14} />
+                        Export
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearArDebugLog();
+                          showToast("Debug log cleared");
+                        }}
+                      >
+                        <Trash2 size={14} />
+                        Clear
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+                <p>
+                  Records the raw sensor stream and every compass-fusion decision. Tap the floating
+                  POI button the instant the view misbehaves, then export the log as JSON.
+                </p>
+              </>
+            ) : null}
 
             <button
               type="button"

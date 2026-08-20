@@ -121,7 +121,7 @@ function parseJsonEntries(raw: string, sourceName: string) {
 
 function recordFromJson(raw: string, sourceName: string) {
   try {
-    return createSatelliteRecord(parseElementInput(raw), "seed");
+    return createSatelliteRecord(parseElementInput(raw), "celestrak");
   } catch (caught) {
     const detail = caught instanceof Error ? caught.message : "Invalid JSON record.";
     throw new Error(`"${sourceName}" returned invalid OMM JSON: ${detail}`, { cause: caught });
@@ -295,7 +295,7 @@ export async function* iterateTleSource(source: TleSource) {
   }
 
   for (const entry of parseTleCatalog(raw)) {
-    yield createSatelliteRecord(parseElementInput(entry), "seed");
+    yield createSatelliteRecord(parseElementInput(entry), "celestrak");
   }
 }
 

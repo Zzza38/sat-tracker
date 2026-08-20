@@ -69,5 +69,6 @@ describe("CelesTrak client", () => {
     });
 
     expect(records.map((record) => record.id)).toEqual(["25544", "25545"]);
+    expect(records.every((record) => record.source === "celestrak")).toBe(true);
   });
 });

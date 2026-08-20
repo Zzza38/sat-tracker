@@ -147,7 +147,7 @@ async function fetchInitialSources(
   }
 }
 
-function catalogNeedsRefresh(
+export function catalogNeedsRefresh(
   records: SatelliteRecord[],
   appSettings: Awaited<ReturnType<typeof getSettings>>
 ) {
@@ -161,14 +161,15 @@ function catalogNeedsRefresh(
     return true;
   }
 
-  if (records.some((record) => record.source === "seed")) {
+  const fetchedRecords = records.filter((record) => record.source !== "seed");
+  if (!appSettings.initialSourcesFetched || fetchedRecords.length === 0) {
     return true;
   }
 
   const refreshMs =
     refreshIntervalToHours(appSettings.refreshIntervalValue, appSettings.refreshIntervalUnit) * 60 * 60 * 1000;
   const oldestFetch = Math.min(
-    ...records.map((record) => new Date(record.fetchedAt).getTime()).filter(Number.isFinite)
+    ...fetchedRecords.map((record) => new Date(record.fetchedAt).getTime()).filter(Number.isFinite)
   );
 
   return !Number.isFinite(oldestFetch) || Date.now() - oldestFetch >= refreshMs;

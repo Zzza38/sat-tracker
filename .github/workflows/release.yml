@@ -13,11 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
-      - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - name: Verify tag matches package version
         run: node -e "const p=require('./package.json'); if (process.env.GITHUB_REF_NAME !== 'v'+p.version) process.exit(1)"
@@ -54,11 +54,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
-      - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: ${{ matrix.command }}
       - uses: actions/upload-artifact@v4
