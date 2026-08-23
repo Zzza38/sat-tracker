@@ -1,11 +1,11 @@
 /**
  * Whether this device can actually feed the AR finder a heading.
  *
- * Desktop browsers expose `DeviceOrientationEvent` even when there is no gyro
- * or magnetometer. Treating that as support would show a sky-finder tab that
- * cannot point at anything, so we only opt in when the platform advertises
- * real motion hardware: the Generic Sensor API, iOS permission, or a phone /
- * tablet user agent.
+ * Desktop browsers expose `DeviceOrientationEvent` and even
+ * `AbsoluteOrientationSensor` when there is no gyro. Treating those
+ * constructors as support would show a sky-finder tab that cannot point at
+ * anything, so we only opt in for iOS motion permission or a phone / tablet
+ * user agent.
  */
 
 export interface OrientationCapabilityHost {
@@ -29,18 +29,18 @@ export function readOrientationCapabilityHost(): OrientationCapabilityHost {
 export function canAccessOrientationSensors(
   host: OrientationCapabilityHost = readOrientationCapabilityHost()
 ): boolean {
-  if (typeof host.AbsoluteOrientationSensor === "function") {
-    return true;
-  }
-
   const orientation = host.DeviceOrientationEvent as
     | { requestPermission?: unknown }
     | undefined;
-  if (orientation == null) {
-    return false;
-  }
-  if (typeof orientation.requestPermission === "function") {
+
+  // Chrome desktop ships AbsoluteOrientationSensor and DeviceOrientationEvent
+  // even when the machine has no gyro. Constructor presence is not hardware.
+  if (typeof orientation?.requestPermission === "function") {
     return true;
+  }
+
+  if (orientation == null && typeof host.AbsoluteOrientationSensor !== "function") {
+    return false;
   }
 
   return isMotionPhone(host);

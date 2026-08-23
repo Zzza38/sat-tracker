@@ -21,13 +21,13 @@ describe("orientation sensor capability", () => {
     ).toBe(false);
   });
 
-  it("shows AR when the Generic Sensor API is present", () => {
+  it("does not treat a desktop Generic Sensor API stub as real hardware", () => {
     expect(
       canAccessOrientationSensors({
         ...desktop,
         AbsoluteOrientationSensor: class AbsoluteOrientationSensor {}
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("shows AR on iOS, which gates motion behind requestPermission", () => {
