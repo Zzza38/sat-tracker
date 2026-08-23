@@ -1134,15 +1134,6 @@ button.ar-chip.selected:not([data-slot]) {
   color: #fff;
 }
 
-.ar-chip-dot {
-  flex: none;
-  width: 0.65rem;
-  height: 0.65rem;
-  border-radius: 999px;
-  background: var(--chip-color);
-  box-shadow: 0 0 6px var(--chip-color);
-}
-
 .ar-chip-name {
   max-width: 12rem;
   overflow: hidden;
@@ -1161,12 +1152,56 @@ button.ar-chip.selected:not([data-slot]) {
 }
 
 .ar-hud-card {
+  position: relative;
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 16px;
   background: rgba(5, 10, 14, 0.82);
-  padding: 1.05rem 1.1rem;
+  padding: 1.05rem 3.1rem 1.05rem 1.1rem;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(18px);
+}
+
+button.ar-hud-toggle:not([data-slot]) {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8f3f8;
+  padding: 0;
+  touch-action: manipulation;
+}
+
+button.ar-hud-toggle:not([data-slot]):active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.ar-hud-card--collapsed {
+  display: flex;
+  min-height: 3.7rem;
+  align-items: center;
+  padding: 0.72rem 3.1rem 0.72rem 1rem;
+}
+
+.ar-hud-card--collapsed button.ar-hud-toggle:not([data-slot]) {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.ar-hud-card--collapsed .ar-stats,
+.ar-hud-card--collapsed .ar-next-pass {
+  display: none;
+}
+
+.ar-hud-card--collapsed .ar-guidance {
+  margin-top: 0;
+  text-align: left;
 }
 
 .ar-stats {

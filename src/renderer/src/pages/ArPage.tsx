@@ -5,6 +5,8 @@ import {
   Bug,
   Camera,
   CameraOff,
+  ChevronDown,
+  ChevronUp,
   Download,
   Flag,
   LocateFixed,
@@ -59,6 +61,7 @@ import { requestNotificationPermission } from "../lib/platform";
 const DISH_OFFSET_KEY = "sat-tracker-dish-offset";
 const CAMERA_FOV_KEY = "sat-tracker-camera-fov";
 const COMPASS_TRIM_KEY = "sat-tracker-compass-trim";
+const HUD_COLLAPSED_KEY = "sat-tracker-ar-hud-collapsed";
 const MAX_AR_SATELLITES = 12;
 const ORBIT_POINTS = 46;
 const ORBIT_STEP_SECONDS = 60;
@@ -99,6 +102,14 @@ function readStoredNumber(key: string, fallback: number, min: number, max: numbe
     return fallback;
   }
   return Math.max(min, Math.min(max, stored));
+}
+
+function readStoredBoolean(key: string, fallback: boolean) {
+  const raw = localStorage.getItem(key);
+  if (raw === null) {
+    return fallback;
+  }
+  return raw === "1" || raw === "true";
 }
 
 function safeSnapshot(
@@ -186,6 +197,7 @@ export function ArPage() {
     readStoredNumber(COMPASS_TRIM_KEY, 0, -MAX_COMPASS_TRIM_DEG, MAX_COMPASS_TRIM_DEG)
   );
   const [debugMode, setDebugMode] = useState(() => import.meta.env.DEV && isArDebugEnabled());
+  const [hudCollapsed, setHudCollapsed] = useState(() => readStoredBoolean(HUD_COLLAPSED_KEY, false));
   const [, setReminderRevision] = useState(0);
 
   const fieldOfView = useMemo(
@@ -1086,7 +1098,6 @@ export function ArPage() {
                     style={{ "--chip-color": target.color } as React.CSSProperties}
                     onClick={() => selectSatellite(target.satellite.id)}
                   >
-                    <span className="ar-chip-dot" />
                     <span className="ar-chip-name">{target.satellite.name}</span>
                     <span className={`ar-chip-el ${aboveHorizon ? "up" : ""}`}>
                       {aboveHorizon ? "▲" : "▽"} {Math.abs(target.snapshot.elevationDeg).toFixed(0)}°
@@ -1097,7 +1108,22 @@ export function ArPage() {
             </div>
 
             {focus ? (
-              <div className="ar-hud-card">
+              <div className={`ar-hud-card${hudCollapsed ? " ar-hud-card--collapsed" : ""}`}>
+                <button
+                  type="button"
+                  className="ar-hud-toggle"
+                  aria-expanded={!hudCollapsed}
+                  aria-label={hudCollapsed ? "Show status" : "Hide status"}
+                  onClick={() => {
+                    setHudCollapsed((collapsed) => {
+                      const next = !collapsed;
+                      localStorage.setItem(HUD_COLLAPSED_KEY, next ? "1" : "0");
+                      return next;
+                    });
+                  }}
+                >
+                  {hudCollapsed ? <ChevronUp size={22} /> : <ChevronDown size={22} />}
+                </button>
                 <div className="ar-stats">
                   <div>
                     <span>AZ</span>
