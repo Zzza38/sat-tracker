@@ -16,6 +16,7 @@ import { DEFAULT_OBSERVER } from "@/shared/observer/defaults";
 import { DEFAULT_TLE_SOURCES, refreshIntervalToHours } from "@/shared/tle/sources";
 import { resolveSatelliteColor } from "@/shared/satellite/colors";
 import { ObserverSite, PassPrediction, SatelliteRecord } from "@/shared/types";
+import { canAccessOrientationSensors } from "../lib/arCapability";
 
 type Page = "catalog" | "tracker" | "ar" | "passes" | "details" | "settings";
 
@@ -49,7 +50,10 @@ function writeUiState(partial: StoredUiState) {
   }
 }
 
-function normalizePage(page: unknown): Page {
+function normalizePage(page: unknown, arAvailable: boolean): Page {
+  if (page === "ar" && !arAvailable) {
+    return "tracker";
+  }
   return page === "catalog" || page === "tracker" || page === "ar" || page === "passes" || page === "details" || page === "settings"
     ? page
     : "catalog";
@@ -182,7 +186,8 @@ function chooseDefaultSatelliteId(records: SatelliteRecord[], watchlistIds: stri
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const storedUi = readUiState();
-  const [page, setPageState] = useState<Page>(normalizePage(storedUi.page));
+  const arAvailable = canAccessOrientationSensors();
+  const [page, setPageState] = useState<Page>(normalizePage(storedUi.page, arAvailable));
   const [trackerViewMode, setTrackerViewModeState] = useState<"2d" | "3d">(
     storedUi.trackerViewMode ?? "2d"
   );
@@ -205,8 +210,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const observerSelectionEpochRef = useRef(0);
 
   const setPage = (nextPage: Page) => {
-    setPageState(nextPage);
-    writeUiState({ page: nextPage });
+    const resolved = normalizePage(nextPage, arAvailable);
+    setPageState(resolved);
+    writeUiState({ page: resolved });
   };
 
   const setTrackerViewMode = (mode: "2d" | "3d") => {

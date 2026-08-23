@@ -1,6 +1,6 @@
 import { clsx } from "clsx";
 import { useApp } from "../context/AppContext";
-import { NAV_ITEMS } from "./navItems";
+import { getVisibleNavItems } from "./navItems";
 
 export function NavRail() {
   const { page, setPage } = useApp();
@@ -8,7 +8,7 @@ export function NavRail() {
   return (
     <aside className="flex w-52 shrink-0 flex-col gap-1">
       <nav className="flex flex-col gap-1" aria-label="Primary">
-        {NAV_ITEMS.map((item) => {
+        {getVisibleNavItems().map((item) => {
           const Icon = item.icon;
           const active = page === item.id;
           return (

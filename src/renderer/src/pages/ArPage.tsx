@@ -5,11 +5,9 @@ import {
   Bug,
   Camera,
   CameraOff,
-  Crosshair,
   Download,
   Flag,
   LocateFixed,
-  Move,
   Satellite,
   Settings2,
   Trash2
@@ -32,15 +30,13 @@ import {
   applyHeadingTrim,
   dishFaceElevation,
   interpolateLookAngles,
-  quaternionFromView,
   selectNextLookPass,
   signedAngleDifference,
   stageFieldOfView,
   viewFromQuaternion,
   type LookAngles,
   type OrientationSource,
-  type Quaternion,
-  type ViewDirection
+  type Quaternion
 } from "../lib/ar";
 import { startOrientationStream } from "../lib/arSensors";
 import {
@@ -162,8 +158,6 @@ export function ArPage() {
   const ribbonHeadingFilterRef = useRef(new AngleFilter());
   const sensorSampleRef = useRef<{ q: Quaternion; source: OrientationSource } | null>(null);
   const sensorSourceRef = useRef<OrientationSource | null>(null);
-  const manualViewRef = useRef<ViewDirection>({ headingDeg: 0, elevationDeg: 24, rollDeg: 0 });
-  const viewRef = useRef<ViewDirection>({ headingDeg: 0, elevationDeg: 24, rollDeg: 0 });
   const hitRegionsRef = useRef<ArHitRegion[]>([]);
   const lastHudUpdateRef = useRef(0);
   const dragRef = useRef<{
@@ -180,7 +174,6 @@ export function ArPage() {
   const [cameraActive, setCameraActive] = useState(false);
   const [sensorState, setSensorState] = useState<SensorState>("idle");
   const [sensorSource, setSensorSource] = useState<OrientationSource | null>(null);
-  const [manualMode, setManualMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [stageSize, setStageSize] = useState({ width: 390, height: 700 });
@@ -330,7 +323,6 @@ export function ArPage() {
     fieldOfView,
     dishOffset,
     compassTrim,
-    manualMode,
     focusId: focus?.satellite.id ?? null,
     liveSky,
     orbitsById,
@@ -341,7 +333,6 @@ export function ArPage() {
     fieldOfView,
     dishOffset,
     compassTrim,
-    manualMode,
     focusId: focus?.satellite.id ?? null,
     liveSky,
     orbitsById,
@@ -415,15 +406,16 @@ export function ArPage() {
     const dpr = Math.min(2.5, window.devicePixelRatio || 1);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Orientation: manual aim and the sensor stream share one filtered path.
     const sensorSample = sensorSampleRef.current;
-    const useManual = state.manualMode || sensorSample === null;
-    const targetQuaternion = useManual
-      ? quaternionFromView(manualViewRef.current)
-      : applyHeadingTrim(sensorSample.q, state.compassTrim);
-    const filtered = filterRef.current.update(targetQuaternion, frameTimeMs);
+    if (!sensorSample) {
+      ctx.clearRect(0, 0, width, height);
+      return;
+    }
+    const filtered = filterRef.current.update(
+      applyHeadingTrim(sensorSample.q, state.compassTrim),
+      frameTimeMs
+    );
     const view = viewFromQuaternion(filtered);
-    viewRef.current = view;
 
     // The ribbon heading gets its own smoothing, scaled by cos(elevation):
     // pointing the camera up amplifies heading wobble by 1/cos(elevation), so
@@ -504,8 +496,7 @@ export function ArPage() {
         h: Math.round(view.headingDeg * 10) / 10,
         el: Math.round(view.elevationDeg * 10) / 10,
         ribbon: Math.round(ribbonHeadingDeg * 10) / 10,
-        src: sensorSourceRef.current,
-        manual: useManual
+        src: sensorSourceRef.current
       });
     }
 
@@ -569,7 +560,7 @@ export function ArPage() {
     return () => window.cancelAnimationFrame(rafId);
   }, [arStarted]);
 
-  // --- Pointer input: tap to select, drag to aim in manual mode ---------------
+  // --- Pointer input: tap a marker to select it --------------------------------
 
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -592,25 +583,11 @@ export function ArPage() {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    const dx = x - drag.lastX;
-    const dy = y - drag.lastY;
     drag.lastX = x;
     drag.lastY = y;
     if (Math.hypot(x - drag.startX, y - drag.startY) > 8) {
       drag.moved = true;
     }
-
-    if (!frameStateRef.current.manualMode || !drag.moved) {
-      return;
-    }
-    // Content follows the finger, like panning a panorama.
-    const focal = frameStateRef.current.fieldOfView.focalPx;
-    const current = manualViewRef.current;
-    manualViewRef.current = {
-      headingDeg: ((current.headingDeg - (dx / focal) / DEG) % 360 + 360) % 360,
-      elevationDeg: Math.max(-88, Math.min(88, current.elevationDeg + (dy / focal) / DEG)),
-      rollDeg: 0
-    };
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -685,14 +662,6 @@ export function ArPage() {
     showToast(next ? "Debug logging on — mark POIs when it misbehaves" : "Debug logging off");
   }
 
-  function enableManualAim() {
-    // Seamless hand-off: keep looking where the sensors left the view.
-    manualViewRef.current = { ...viewRef.current, rollDeg: 0 };
-    filterRef.current.reset();
-    ribbonHeadingFilterRef.current.reset();
-    setManualMode(true);
-  }
-
   async function startAr() {
     setArStarted(true);
     setSensorState("pending");
@@ -743,7 +712,6 @@ export function ArPage() {
           filterRef.current.reset();
           ribbonHeadingFilterRef.current.reset();
           setSensorState("live");
-          setManualMode(false);
         }
         sensorSampleRef.current = { q: quaternion, source };
         if (sensorSourceRef.current !== source) {
@@ -758,14 +726,10 @@ export function ArPage() {
       sensorTimeoutRef.current = window.setTimeout(() => {
         if (sensorSampleRef.current === null) {
           setSensorState("unavailable");
-          setManualMode(true);
-          showToast("No motion data — drag to aim");
         }
       }, 1800);
     } catch {
       setSensorState("unavailable");
-      setManualMode(true);
-      showToast("Motion sensors unavailable — drag to aim");
     }
   }
 
@@ -803,17 +767,16 @@ export function ArPage() {
     ? "Ready"
     : sensorState === "pending"
       ? "Starting…"
-      : manualMode
+      : sensorState === "live"
         ? cameraActive
-          ? "Camera · manual aim"
-          : "Manual aim"
-        : sensorState === "live"
-          ? cameraActive
-            ? `Live · ${sensorSource ? SOURCE_LABELS[sensorSource] : "sensors"}`
-            : `Sensors only · ${sensorSource ? SOURCE_LABELS[sensorSource] : "camera off"}`
+          ? `Live · ${sensorSource ? SOURCE_LABELS[sensorSource] : "sensors"}`
+          : `Sensors only · ${sensorSource ? SOURCE_LABELS[sensorSource] : "camera off"}`
+        : sensorState === "unavailable"
+          ? "Sensors unavailable"
           : "Waiting for sensors…";
 
-  const showEmptyState = arStarted && skyTargets.length === 0;
+  const showSensorError = arStarted && sensorState === "unavailable";
+  const showEmptyState = arStarted && !showSensorError && skyTargets.length === 0;
 
   return (
     <div className="ar-page">
@@ -878,13 +841,6 @@ export function ArPage() {
           </div>
         </header>
 
-        {arStarted && manualMode ? (
-          <div className="ar-hint-chip" aria-hidden="true">
-            <Move size={16} />
-            Drag to aim
-          </div>
-        ) : null}
-
         {import.meta.env.DEV && arStarted && debugMode ? (
           <button
             type="button"
@@ -910,7 +866,17 @@ export function ArPage() {
             <Button size="lg" className="ar-start-cta" onClick={() => void startAr()}>
               <LocateFixed size={22} /> Start sky finder
             </Button>
-            <span className="ar-start-hint">No sensors? You can drag to look around instead.</span>
+          </div>
+        ) : null}
+
+        {showSensorError ? (
+          <div className="ar-empty">
+            <LocateFixed size={28} />
+            <strong>Motion sensors unavailable</strong>
+            <p>Sky finder needs a compass and gyroscope. Grant motion access and try again.</p>
+            <Button size="lg" variant="secondary" onClick={() => void startAr()}>
+              Try again
+            </Button>
           </div>
         ) : null}
 
@@ -1079,41 +1045,18 @@ export function ArPage() {
                 </p>
               </>
             ) : null}
-
-            <button
-              type="button"
-              className="ar-manual-toggle"
-              disabled={manualMode && sensorState !== "live"}
-              onClick={() => {
-                if (manualMode) {
-                  filterRef.current.reset();
-                  ribbonHeadingFilterRef.current.reset();
-                  setManualMode(false);
-                } else {
-                  enableManualAim();
-                }
-                setShowSettings(false);
-              }}
-            >
-              <Crosshair size={18} />
-              {manualMode
-                ? sensorState === "live"
-                  ? "Use device sensors"
-                  : "Device sensors unavailable"
-                : "Manual aim (drag to look)"}
-            </button>
           </aside>
         ) : null}
 
-        {arStarted && skyTargets.length > 0 ? (
-          <div className="ar-hud">
-            {toast ? (
-              <div className="ar-toast" role="status" aria-live="polite">
-                <BellRing size={18} />
-                <span>{toast}</span>
-              </div>
-            ) : null}
+        {toast ? (
+          <div className="ar-toast" role="status" aria-live="polite">
+            <BellRing size={18} />
+            <span>{toast}</span>
+          </div>
+        ) : null}
 
+        {arStarted && sensorState === "live" && skyTargets.length > 0 ? (
+          <div className="ar-hud">
             <div className="ar-chips" role="listbox" aria-label="Tracked satellites">
               {skyTargets.map((target) => {
                 const selected = target.satellite.id === focus?.satellite.id;

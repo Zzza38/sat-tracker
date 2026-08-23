@@ -1,4 +1,5 @@
 import { Camera, Globe2, Info, Radar, Settings2, TableProperties } from "lucide-react";
+import { canAccessOrientationSensors } from "../lib/arCapability";
 
 export const NAV_ITEMS = [
   { id: "catalog", label: "Catalog", icon: TableProperties },
@@ -8,3 +9,7 @@ export const NAV_ITEMS = [
   { id: "details", label: "Details", icon: Info },
   { id: "settings", label: "Settings", icon: Settings2 }
 ] as const;
+
+export function getVisibleNavItems(arAvailable = canAccessOrientationSensors()) {
+  return NAV_ITEMS.filter((item) => item.id !== "ar" || arAvailable);
+}
