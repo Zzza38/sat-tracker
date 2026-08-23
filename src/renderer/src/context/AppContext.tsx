@@ -187,10 +187,11 @@ function chooseDefaultSatelliteId(records: SatelliteRecord[], watchlistIds: stri
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const storedUi = readUiState();
-  const storedPage = storedUi.page;
-  const [arAvailable, setArAvailable] = useState(() => canAccessOrientationSensors());
+  const sensorsKnownAtBoot = canAccessOrientationSensors();
+  const redirectedFromArRef = useRef(storedUi.page === "ar" && !sensorsKnownAtBoot);
+  const [arAvailable, setArAvailable] = useState(sensorsKnownAtBoot);
   const [page, setPageState] = useState<Page>(() =>
-    normalizePage(storedPage, canAccessOrientationSensors())
+    normalizePage(storedUi.page, sensorsKnownAtBoot)
   );
   const [trackerViewMode, setTrackerViewModeState] = useState<"2d" | "3d">(
     storedUi.trackerViewMode ?? "2d"
@@ -380,15 +381,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       setArAvailable(available);
       setPageState((current) => {
-        if (available) {
-          const restored = normalizePage(storedPage, true);
-          if (restored === "ar" && current !== "ar") {
-            writeUiState({ page: "ar" });
-            return "ar";
-          }
-          return current;
+        if (
+          available &&
+          redirectedFromArRef.current &&
+          current === "tracker"
+        ) {
+          redirectedFromArRef.current = false;
+          writeUiState({ page: "ar" });
+          return "ar";
         }
-        if (current === "ar") {
+        if (!available && current === "ar") {
           writeUiState({ page: "tracker" });
           return "tracker";
         }
@@ -398,7 +400,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [storedPage]);
+  }, []);
 
   const selectedSatellite = useMemo(
     () => satellites.find((record) => record.id === selectedSatelliteId),
