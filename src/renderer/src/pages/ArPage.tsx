@@ -722,6 +722,7 @@ export function ArPage() {
       setCameraActive(true);
     } catch {
       setCameraActive(false);
+      showToast("Camera unavailable — using sky backdrop");
     }
 
     try {
@@ -758,11 +759,13 @@ export function ArPage() {
         if (sensorSampleRef.current === null) {
           setSensorState("unavailable");
           setManualMode(true);
+          showToast("No motion data — drag to aim");
         }
       }, 1800);
     } catch {
       setSensorState("unavailable");
       setManualMode(true);
+      showToast("Motion sensors unavailable — drag to aim");
     }
   }
 
@@ -843,19 +846,24 @@ export function ArPage() {
         />
 
         <header className="ar-topbar">
-          <div className="ar-status-pill">
-            <span className={`ar-live-dot ${cameraActive ? "active" : ""}`} />
-            <span>{statusText}</span>
-          </div>
+          <p className="ar-status-sr" role="status" aria-live="polite">
+            {statusText}
+          </p>
+          {arStarted && sensorState === "pending" ? (
+            <div className="ar-status-banner" role="status">
+              Starting camera and sensors…
+            </div>
+          ) : null}
           <div className="ar-top-actions">
             {arStarted ? (
               <button
                 type="button"
-                className="ar-icon-button"
+                className={`ar-icon-button ${cameraActive ? "live" : ""}`}
                 aria-label={cameraActive ? "Turn camera off" : "Retry camera"}
                 onClick={cameraActive ? stopCamera : () => void startAr()}
               >
-                {cameraActive ? <CameraOff size={17} /> : <Camera size={17} />}
+                {cameraActive ? <CameraOff size={22} /> : <Camera size={22} />}
+                {cameraActive ? <span className="ar-live-dot active" aria-hidden="true" /> : null}
               </button>
             ) : null}
             <button
@@ -865,14 +873,14 @@ export function ArPage() {
               aria-expanded={showSettings}
               onClick={() => setShowSettings((open) => !open)}
             >
-              <Settings2 size={18} />
+              <Settings2 size={22} />
             </button>
           </div>
         </header>
 
         {arStarted && manualMode ? (
           <div className="ar-hint-chip" aria-hidden="true">
-            <Move size={13} />
+            <Move size={16} />
             Drag to aim
           </div>
         ) : null}
@@ -892,15 +900,15 @@ export function ArPage() {
         {!arStarted ? (
           <div className="ar-start">
             <div className="ar-start-icon">
-              <Satellite size={28} />
+              <Satellite size={36} />
             </div>
             <h1>Sky finder</h1>
             <p>
               Hold your phone up and follow the on-screen guidance to the satellites you track.
               Camera and motion sensors stay on this device.
             </p>
-            <Button size="lg" onClick={() => void startAr()}>
-              <LocateFixed size={17} /> Start sky finder
+            <Button size="lg" className="ar-start-cta" onClick={() => void startAr()}>
+              <LocateFixed size={22} /> Start sky finder
             </Button>
             <span className="ar-start-hint">No sensors? You can drag to look around instead.</span>
           </div>
@@ -908,10 +916,10 @@ export function ArPage() {
 
         {showEmptyState ? (
           <div className="ar-empty">
-            <Satellite size={22} />
+            <Satellite size={28} />
             <strong>Nothing to point at yet</strong>
             <p>Add satellites to your watchlist and they will appear in the sky here.</p>
-            <Button size="sm" variant="secondary" onClick={() => setPage("catalog")}>
+            <Button size="lg" variant="secondary" onClick={() => setPage("catalog")}>
               Browse catalog
             </Button>
           </div>
@@ -1087,7 +1095,7 @@ export function ArPage() {
                 setShowSettings(false);
               }}
             >
-              <Crosshair size={15} />
+              <Crosshair size={18} />
               {manualMode
                 ? sensorState === "live"
                   ? "Use device sensors"
@@ -1101,7 +1109,7 @@ export function ArPage() {
           <div className="ar-hud">
             {toast ? (
               <div className="ar-toast" role="status" aria-live="polite">
-                <BellRing size={15} />
+                <BellRing size={18} />
                 <span>{toast}</span>
               </div>
             ) : null}
@@ -1162,12 +1170,12 @@ export function ArPage() {
                     {nextPass ? <small>Peaks at {nextPass.maxElevationDeg.toFixed(0)}°</small> : null}
                   </div>
                   <Button
-                    size="sm"
+                    size="lg"
                     variant={reminderSet ? "default" : "secondary"}
                     disabled={!nextPass}
                     onClick={() => void toggleReminder()}
                   >
-                    {reminderSet ? <BellRing size={15} /> : <Bell size={15} />}
+                    {reminderSet ? <BellRing size={18} /> : <Bell size={18} />}
                     {reminderSet ? "Alert set" : "Notify"}
                   </Button>
                 </div>
