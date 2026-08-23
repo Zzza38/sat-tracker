@@ -16,7 +16,7 @@ import { DEFAULT_OBSERVER } from "@/shared/observer/defaults";
 import { DEFAULT_TLE_SOURCES, refreshIntervalToHours } from "@/shared/tle/sources";
 import { resolveSatelliteColor } from "@/shared/satellite/colors";
 import { ObserverSite, PassPrediction, SatelliteRecord } from "@/shared/types";
-import { canAccessOrientationSensors } from "../lib/arCapability";
+import { canAccessOrientationSensors, detectOrientationHardware } from "../lib/arCapability";
 
 type Page = "catalog" | "tracker" | "ar" | "passes" | "details" | "settings";
 
@@ -62,6 +62,7 @@ function normalizePage(page: unknown, arAvailable: boolean): Page {
 interface AppContextValue {
   page: Page;
   setPage: (page: Page) => void;
+  arAvailable: boolean;
   trackerViewMode: "2d" | "3d";
   setTrackerViewMode: (mode: "2d" | "3d") => void;
   satellites: SatelliteRecord[];
@@ -186,8 +187,11 @@ function chooseDefaultSatelliteId(records: SatelliteRecord[], watchlistIds: stri
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const storedUi = readUiState();
-  const arAvailable = canAccessOrientationSensors();
-  const [page, setPageState] = useState<Page>(normalizePage(storedUi.page, arAvailable));
+  const storedPage = storedUi.page;
+  const [arAvailable, setArAvailable] = useState(() => canAccessOrientationSensors());
+  const [page, setPageState] = useState<Page>(() =>
+    normalizePage(storedPage, canAccessOrientationSensors())
+  );
   const [trackerViewMode, setTrackerViewModeState] = useState<"2d" | "3d">(
     storedUi.trackerViewMode ?? "2d"
   );
@@ -368,6 +372,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void refreshCatalog();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void detectOrientationHardware().then((available) => {
+      if (cancelled) {
+        return;
+      }
+      setArAvailable(available);
+      setPageState((current) => {
+        if (available) {
+          const restored = normalizePage(storedPage, true);
+          if (restored === "ar" && current !== "ar") {
+            writeUiState({ page: "ar" });
+            return "ar";
+          }
+          return current;
+        }
+        if (current === "ar") {
+          writeUiState({ page: "tracker" });
+          return "tracker";
+        }
+        return current;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [storedPage]);
+
   const selectedSatellite = useMemo(
     () => satellites.find((record) => record.id === selectedSatelliteId),
     [satellites, selectedSatelliteId]
@@ -391,6 +423,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppContextValue>(() => ({
     page,
     setPage,
+    arAvailable,
     trackerViewMode,
     setTrackerViewMode,
     satellites,
@@ -564,6 +597,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     setPasses
   }), [
+    arAvailable,
     bootstrapping,
     catalogSyncing,
     error,

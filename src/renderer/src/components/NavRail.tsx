@@ -3,12 +3,12 @@ import { useApp } from "../context/AppContext";
 import { getVisibleNavItems } from "./navItems";
 
 export function NavRail() {
-  const { page, setPage } = useApp();
+  const { page, setPage, arAvailable } = useApp();
 
   return (
     <aside className="flex w-52 shrink-0 flex-col gap-1">
       <nav className="flex flex-col gap-1" aria-label="Primary">
-        {getVisibleNavItems().map((item) => {
+        {getVisibleNavItems(arAvailable).map((item) => {
           const Icon = item.icon;
           const active = page === item.id;
           return (

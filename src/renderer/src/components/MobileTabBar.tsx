@@ -3,11 +3,11 @@ import { useApp } from "../context/AppContext";
 import { getVisibleNavItems } from "./navItems";
 
 export function MobileTabBar() {
-  const { page, setPage } = useApp();
+  const { page, setPage, arAvailable } = useApp();
 
   return (
     <nav className="mobile-tab-bar" aria-label="Primary">
-      {getVisibleNavItems().map((item) => {
+      {getVisibleNavItems(arAvailable).map((item) => {
         const Icon = item.icon;
         const active = page === item.id;
         return (
