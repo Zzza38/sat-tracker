@@ -662,15 +662,7 @@ export function ArPage() {
     showToast(next ? "Debug logging on — mark POIs when it misbehaves" : "Debug logging off");
   }
 
-  async function startAr() {
-    setArStarted(true);
-    setSensorState("pending");
-
-    // Start the iOS motion request synchronously inside the button click.
-    // Awaiting getUserMedia first causes Mobile Safari to discard the user
-    // activation and reject DeviceOrientationEvent.requestPermission().
-    const orientationPermission = requestOrientationPermissionFromGesture();
-
+  async function startCamera() {
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("This browser does not expose camera access.");
@@ -692,6 +684,27 @@ export function ArPage() {
     } catch {
       setCameraActive(false);
       showToast("Camera unavailable — using sky backdrop");
+    }
+  }
+
+  async function startAr() {
+    setArStarted(true);
+    const sensorsAlreadyLive = sensorState === "live" && sensorSampleRef.current !== null;
+    if (!sensorsAlreadyLive) {
+      setSensorState("pending");
+    }
+
+    // Start the iOS motion request synchronously inside the button click.
+    // Awaiting getUserMedia first causes Mobile Safari to discard the user
+    // activation and reject DeviceOrientationEvent.requestPermission().
+    const orientationPermission = sensorsAlreadyLive
+      ? Promise.resolve({ permission: "granted" as const })
+      : requestOrientationPermissionFromGesture();
+
+    await startCamera();
+
+    if (sensorsAlreadyLive) {
+      return;
     }
 
     try {
@@ -823,7 +836,7 @@ export function ArPage() {
                 type="button"
                 className={`ar-icon-button ${cameraActive ? "live" : ""}`}
                 aria-label={cameraActive ? "Turn camera off" : "Retry camera"}
-                onClick={cameraActive ? stopCamera : () => void startAr()}
+                onClick={cameraActive ? stopCamera : () => void startCamera()}
               >
                 {cameraActive ? <CameraOff size={22} /> : <Camera size={22} />}
                 {cameraActive ? <span className="ar-live-dot active" aria-hidden="true" /> : null}
@@ -1048,16 +1061,18 @@ export function ArPage() {
           </aside>
         ) : null}
 
-        {toast ? (
-          <div className="ar-toast" role="status" aria-live="polite">
-            <BellRing size={18} />
-            <span>{toast}</span>
-          </div>
-        ) : null}
-
-        {arStarted && sensorState === "live" && skyTargets.length > 0 ? (
+        {toast || (arStarted && sensorState === "live" && skyTargets.length > 0) ? (
           <div className="ar-hud">
-            <div className="ar-chips" role="listbox" aria-label="Tracked satellites">
+            {toast ? (
+              <div className="ar-toast" role="status" aria-live="polite">
+                <BellRing size={18} />
+                <span>{toast}</span>
+              </div>
+            ) : null}
+
+            {arStarted && sensorState === "live" && skyTargets.length > 0 ? (
+              <>
+                <div className="ar-chips" role="listbox" aria-label="Tracked satellites">
               {skyTargets.map((target) => {
                 const selected = target.satellite.id === focus?.satellite.id;
                 const aboveHorizon = target.snapshot.elevationDeg > 0;
@@ -1123,6 +1138,8 @@ export function ArPage() {
                   </Button>
                 </div>
               </div>
+            ) : null}
+              </>
             ) : null}
           </div>
         ) : null}

@@ -1068,16 +1068,12 @@ button.ar-debug-poi:not([data-slot]):active {
 }
 
 .ar-toast {
-  position: absolute;
-  z-index: 6;
-  top: calc(5.4rem + env(safe-area-inset-top, 0px));
-  left: 50%;
   display: flex;
   width: max-content;
-  max-width: calc(100% - 1.7rem);
+  max-width: 100%;
   align-items: center;
+  align-self: center;
   gap: 0.55rem;
-  transform: translateX(-50%);
   border: 1px solid rgba(111, 227, 165, 0.38);
   border-radius: 12px;
   background: rgba(5, 16, 14, 0.92);
