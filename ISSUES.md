@@ -1,5 +1,10 @@
 # Release review findings
 
+Status as of 1.1.1 (2026-09-03): 1.1.0 shipped the original checklist.
+1.1.1 stops the WASM pass scanner from treating decayed `satellite.js`
+samples as horizon crossings. The notes below are the 2026-08-19 review
+of `f14b7e3`.
+
 Review of `master` (HEAD `f14b7e3`, 2026-08-19) for a new public release. Quality gates pass (`pnpm lint`, `typecheck`, `test`; CI builds web + Electron and packages Windows, macOS, and Linux). The tree is **not** ready to ship.
 
 Compared against published tag `v1.0.0` (`11d319d`, 2026-06-06): **47 commits** ahead, including AR sky finder, PWA/offline, favicons, and AR heading fixes.

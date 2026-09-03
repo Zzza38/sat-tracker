@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1 - 2026-09-03
+
+### Fixed
+
+- Multi-satellite pass scans no longer treat decayed SGP4 samples as
+  on the horizon. The WASM propagator still returns look angles after
+  decay, with elevation 0 and infinite range; those samples are discarded.
+
 ## 1.1.0 - 2026-08-20
 
 ### Added

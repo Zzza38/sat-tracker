@@ -5,6 +5,7 @@ import {
   EciBaseCalculator,
   GmstCalculator,
   LookAnglesCalculator,
+  SatRecError,
   ShadowFractionCalculator,
   SunPositionCalculator
 } from "satellite.js";
@@ -15,6 +16,19 @@ import { satrecFromRecord } from "@/shared/propagation/engine";
 
 let runtimePromise: ReturnType<typeof createSingleThreadRuntime> | null = null;
 const MAX_BULK_DATES = 10000;
+
+// satellite.js WASM still formats look angles after SGP4 fails. Decayed
+// samples come back with error 6, elevation 0, and infinite range, which the
+// horizon test would treat as "in view" forever.
+export function isUsableBulkPropagationSample<T extends {
+  eci?: { error?: number };
+  lookAngles?: unknown;
+}>(output: T | undefined): output is T & { lookAngles: NonNullable<T["lookAngles"]> } {
+  if (!output?.lookAngles) {
+    return false;
+  }
+  return output.eci?.error === SatRecError.None;
+}
 
 async function getRuntime() {
   if (!runtimePromise) {
@@ -108,11 +122,43 @@ export async function predictPassesBulkWasm(
     let passStartIndex = -1;
     const satellitePasses: PassPrediction[] = [];
 
+    const closePass = (passEnd: Date) => {
+      if (passStartIndex < 0) {
+        return;
+      }
+      const passStart = dates[Math.max(passStartIndex, 0)];
+      const refined = predictPassesForSatellite(record, observer, {
+        ...options,
+        start: new Date(passStart.getTime() - stepSeconds * 1000),
+        end: new Date(passEnd.getTime() + stepSeconds * 1000),
+        stepSeconds: 20
+      });
+
+      for (const pass of refined) {
+        const duplicate = allPasses.some(
+          (existing) =>
+            existing.satelliteId === pass.satelliteId &&
+            Math.abs(new Date(existing.aos).getTime() - new Date(pass.aos).getTime()) <
+              stepSeconds * 1000
+        );
+        if (!duplicate) {
+          allPasses.push(pass);
+          satellitePasses.push(pass);
+        }
+      }
+      inPass = false;
+      passStartIndex = -1;
+    };
+
     dates.forEach((date, dateIndex) => {
       const output = propagator.getFormattedOutput(satIndex, dateIndex);
-      if (!output?.lookAngles) {
-        inPass = false;
-        passStartIndex = -1;
+      if (!isUsableBulkPropagationSample(output)) {
+        if (inPass && dateIndex > 0) {
+          closePass(dates[dateIndex - 1]);
+        } else {
+          inPass = false;
+          passStartIndex = -1;
+        }
         return;
       }
 
@@ -125,29 +171,7 @@ export async function predictPassesBulkWasm(
       }
 
       if (inPass && !above) {
-        const passStart = dates[Math.max(passStartIndex, 0)];
-        const passEnd = date;
-        const refined = predictPassesForSatellite(record, observer, {
-          ...options,
-          start: new Date(passStart.getTime() - stepSeconds * 1000),
-          end: new Date(passEnd.getTime() + stepSeconds * 1000),
-          stepSeconds: 20
-        });
-
-        for (const pass of refined) {
-          const duplicate = allPasses.some(
-            (existing) =>
-              existing.satelliteId === pass.satelliteId &&
-              Math.abs(new Date(existing.aos).getTime() - new Date(pass.aos).getTime()) <
-                stepSeconds * 1000
-          );
-          if (!duplicate) {
-            allPasses.push(pass);
-            satellitePasses.push(pass);
-          }
-        }
-        inPass = false;
-        passStartIndex = -1;
+        closePass(date);
       }
     });
 
