@@ -1,14 +1,15 @@
+import { SatRecError } from "satellite.js";
 import { describe, expect, it } from "vitest";
+import { ISS_TLE } from "@/shared/__tests__/fixtures";
 import { DEFAULT_OBSERVER } from "@/shared/observer/defaults";
-import { computeOrbitSnapshot } from "@/shared/propagation/engine";
+import { isUsableBulkPropagationSample, predictPassesBulkWasm } from "@/shared/passes/predictor-bulk";
 import {
   passesToCsv,
   passesToIcs,
   predictPassesForSatellite
 } from "@/shared/passes/predictor-core";
-import { predictPassesBulkWasm } from "@/shared/passes/predictor-bulk";
+import { computeOrbitSnapshot } from "@/shared/propagation/engine";
 import { createSatelliteRecord, parseElementInput } from "@/shared/tle/parser";
-import { ISS_TLE } from "@/shared/__tests__/fixtures";
 
 describe("pass predictor", () => {
   const record = createSatelliteRecord(
@@ -139,6 +140,43 @@ describe("pass predictor", () => {
     expect(passesToIcs([namedPass], "Site, One")).toContain(
       "SUMMARY:SAT\\, \"ONE\"\\;\\nNEXT pass over Site\\, One"
     );
+  });
+
+  it("rejects decayed WASM samples that still carry look angles", () => {
+    expect(isUsableBulkPropagationSample({
+      eci: { error: SatRecError.None },
+      lookAngles: { elevation: 0.1 }
+    })).toBe(true);
+    expect(isUsableBulkPropagationSample({
+      eci: { error: SatRecError.Decayed },
+      lookAngles: { elevation: 0, rangeSat: Number.POSITIVE_INFINITY }
+    })).toBe(false);
+    expect(isUsableBulkPropagationSample({ eci: { error: SatRecError.None } })).toBe(false);
+  });
+
+  it("finds multi-satellite passes on the WASM path", async () => {
+    const other = { ...record, id: "iss-copy", name: "ISS copy" };
+    const passes = await predictPassesBulkWasm([record, other], DEFAULT_OBSERVER, {
+      start: new Date("2019-06-05T00:00:00Z"),
+      end: new Date("2019-06-07T00:00:00Z"),
+      minElevationDeg: 5,
+      stepSeconds: 60
+    });
+
+    expect(passes.length).toBeGreaterThan(0);
+    expect(passes.every((pass) => pass.maxElevationDeg >= 5)).toBe(true);
+  });
+
+  it("does not invent passes after SGP4 decay on the WASM path", async () => {
+    const other = { ...record, id: "iss-copy", name: "ISS copy" };
+    const passes = await predictPassesBulkWasm([record, other], DEFAULT_OBSERVER, {
+      start: new Date("2036-01-01T00:00:00Z"),
+      end: new Date("2036-01-02T00:00:00Z"),
+      minElevationDeg: 0,
+      stepSeconds: 60
+    });
+
+    expect(passes).toEqual([]);
   });
 
   it("neutralizes spreadsheet formulas and emits standards-compliant ICS events", () => {

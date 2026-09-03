@@ -8,7 +8,7 @@ app, an installable PWA, and a desktop Electron app.
 
 - **Web app:** https://sat-tracker.ziona.dev
 - **Desktop downloads:** https://github.com/Zzza38/sat-tracker/releases/latest
-- **Changes in 1.1.0:** [CHANGELOG.md](CHANGELOG.md)
+- **Changes in 1.1.1:** [CHANGELOG.md](CHANGELOG.md)
 
 ## Install a desktop release
 
@@ -76,8 +76,8 @@ pnpm dist:linux
 
 Artifacts are written to `release/`. A tag matching `v*` runs the release
 workflow, builds all desktop platforms, and publishes durable GitHub Release
-assets. The package version and tag must match, for example package `1.1.0`
-with tag `v1.1.0`.
+assets. The package version and tag must match, for example package `1.1.1`
+with tag `v1.1.1`.
 
 ## Static web hosting
 
