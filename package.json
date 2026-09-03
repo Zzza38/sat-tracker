@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "audit:prod": "node scripts/audit-prod.mjs"
   },
   "keywords": ["satellite", "orbit", "sgp4", "tle", "cesium", "electron", "pwa"],
   "author": "Zion <zion@ziona.dev>",

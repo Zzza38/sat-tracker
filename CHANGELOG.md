@@ -7,6 +7,8 @@
 - Multi-satellite pass scans no longer treat decayed SGP4 samples as
   on the horizon. The WASM propagator still returns look angles after
   decay, with elevation 0 and infinite range; those samples are discarded.
+- Release and CI audit steps retry npm registry timeouts instead of
+  failing the tagged desktop build.
 
 ## 1.1.0 - 2026-08-20
 
