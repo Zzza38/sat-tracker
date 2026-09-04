@@ -405,7 +405,9 @@ export function Map2D({
     ) {
       const bounds = event.currentTarget.getBoundingClientRect();
       const anchor = clientToViewBox(bounds, event.clientX, event.clientY);
-      zoomBy(viewportRef.current.zoom >= MAX_ZOOM - 0.01 ? 1 / MAX_ZOOM : 1.7, anchor);
+      // At max zoom, double-tap resets toward the fit view; otherwise zoom in.
+      const currentZoom = viewportRef.current.zoom;
+      zoomBy(currentZoom >= MAX_ZOOM - 0.01 ? 1 / currentZoom : 1.7, anchor);
       lastTapRef.current = null;
       gestureRef.current = null;
       return;
@@ -504,6 +506,8 @@ export function Map2D({
     gestureRef.current = null;
   }
 
+  // Counter-scale markers/strokes so they stay a stable screen size while remaining
+  // planted on the same geographic points as the map pans/zooms (including past edges).
   const markerScale = 1 / viewport.zoom;
   const legendItems = [
     ...satellites.slice(0, 3).map((satellite) => ({
@@ -697,7 +701,7 @@ export function Map2D({
 
       <div className="tracker-map-chrome pointer-events-none absolute inset-0 z-10 p-2.5 sm:p-3">
         <div className="tracker-map-zoom-badge absolute left-2.5 top-2.5 rounded-md border border-[var(--line)] bg-black/45 px-2 py-1 mono text-[0.68rem] text-[var(--muted)] backdrop-blur sm:left-3 sm:top-3">
-          {viewport.zoom.toFixed(1)}x
+          {viewport.zoom >= 1 ? viewport.zoom.toFixed(1) : viewport.zoom.toFixed(2)}x
         </div>
 
         <button
