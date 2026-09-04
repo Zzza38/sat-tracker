@@ -91,28 +91,6 @@ function haloText(
   ctx.fillText(text, x, y);
 }
 
-function roundedRectPath(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number
-) {
-  ctx.beginPath();
-  if (typeof ctx.roundRect === "function") {
-    ctx.roundRect(x, y, width, height, radius);
-    return;
-  }
-  const r = Math.min(radius, width / 2, height / 2);
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + width, y, x + width, y + height, r);
-  ctx.arcTo(x + width, y + height, x, y + height, r);
-  ctx.arcTo(x, y + height, x, y, r);
-  ctx.arcTo(x, y, x + width, y, r);
-  ctx.closePath();
-}
-
 // --- Horizon --------------------------------------------------------------
 
 function drawHorizon(
@@ -152,7 +130,7 @@ function drawHorizon(
   ctx.stroke();
 
   // Azimuth ticks standing on the horizon, cardinal labels every 45 degrees.
-  ctx.font = `600 11px ${MONO_FONT}`;
+  ctx.font = `600 14px ${MONO_FONT}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   const start = Math.ceil((view.headingDeg - fov.horizontalDeg) / 15) * 15;
@@ -179,7 +157,7 @@ function drawHorizon(
     ty /= tickLength;
 
     const cardinal = normalizeDegrees(az) % 45 === 0;
-    const size = cardinal ? 9 : 5;
+    const size = cardinal ? 12 : 7;
     ctx.strokeStyle = cardinal ? "rgba(228, 242, 250, 0.6)" : "rgba(214, 233, 244, 0.3)";
     ctx.lineWidth = cardinal ? 1.4 : 1;
     ctx.beginPath();
@@ -192,8 +170,8 @@ function drawHorizon(
       haloText(
         ctx,
         label,
-        base.x + tx * (size + 11),
-        base.y + ty * (size + 11),
+        base.x + tx * (size + 14),
+        base.y + ty * (size + 14),
         label.length === 1 ? "rgba(240, 249, 255, 0.85)" : "rgba(222, 237, 246, 0.6)"
       );
     }
@@ -258,7 +236,7 @@ function drawOrbits(
     const segments = orbitScreenSegments(target.orbit, basis, scene);
     ctx.strokeStyle = target.color;
     ctx.globalAlpha = target.selected ? 0.8 : 0.28;
-    ctx.lineWidth = target.selected ? 1.8 : 1.1;
+    ctx.lineWidth = target.selected ? 2.4 : 1.4;
     ctx.setLineDash(target.selected ? [] : [4, 8]);
     for (const segment of segments) {
       ctx.beginPath();
@@ -294,7 +272,7 @@ function drawOrbits(
 
       if (trailSpan >= 60) {
         ctx.setLineDash([]);
-        ctx.font = `600 9px ${MONO_FONT}`;
+        ctx.font = `600 12px ${MONO_FONT}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         let lastDot: { x: number; y: number } | null = null;
@@ -309,7 +287,7 @@ function drawOrbits(
             }
             ctx.globalAlpha = 0.9;
             ctx.beginPath();
-            ctx.arc(point.x, point.y, point.index % 10 === 0 ? 2.4 : 1.4, 0, Math.PI * 2);
+            ctx.arc(point.x, point.y, point.index % 10 === 0 ? 3.2 : 1.8, 0, Math.PI * 2);
             ctx.fillStyle = target.color;
             ctx.fill();
             lastDot = point;
@@ -317,7 +295,7 @@ function drawOrbits(
               point.index % 10 === 0 &&
               (!lastLabel || Math.hypot(point.x - lastLabel.x, point.y - lastLabel.y) >= 28)
             ) {
-              haloText(ctx, `+${point.index}m`, point.x, point.y - 11, "rgba(234, 245, 252, 0.85)");
+              haloText(ctx, `+${point.index}m`, point.x, point.y - 14, "rgba(234, 245, 252, 0.85)");
               lastLabel = point;
             }
           }
@@ -340,7 +318,7 @@ function drawTargetMarker(
 ) {
   const { x, y } = projected;
   const belowHorizon = target.elevationDeg < 0;
-  const ringRadius = target.selected ? 15 : 10;
+  const ringRadius = target.selected ? 20 : 14;
 
   ctx.save();
   ctx.globalAlpha = belowHorizon ? 0.45 : 1;
@@ -349,10 +327,10 @@ function drawTargetMarker(
     // Expanding ping so the tracked satellite is findable at a glance.
     const phase = (scene.timeMs % 2000) / 2000;
     ctx.beginPath();
-    ctx.arc(x, y, ringRadius + 4 + phase * 14, 0, Math.PI * 2);
+    ctx.arc(x, y, ringRadius + 5 + phase * 18, 0, Math.PI * 2);
     ctx.strokeStyle = target.color;
     ctx.globalAlpha = (belowHorizon ? 0.45 : 1) * 0.45 * (1 - phase);
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 2;
     ctx.setLineDash([]);
     ctx.stroke();
     ctx.globalAlpha = belowHorizon ? 0.45 : 1;
@@ -363,47 +341,34 @@ function drawTargetMarker(
   ctx.fillStyle = "rgba(4, 9, 14, 0.55)";
   ctx.fill();
   ctx.strokeStyle = target.color;
-  ctx.lineWidth = target.selected ? 2 : 1.4;
+  ctx.lineWidth = target.selected ? 2.4 : 1.8;
   ctx.setLineDash(belowHorizon ? [3, 4] : []);
   ctx.stroke();
   ctx.setLineDash([]);
 
   ctx.beginPath();
-  ctx.arc(x, y, target.selected ? 3.4 : 2.4, 0, Math.PI * 2);
+  ctx.arc(x, y, target.selected ? 4.4 : 3.2, 0, Math.PI * 2);
   ctx.fillStyle = target.color;
   ctx.fill();
 
-  // Name chip above the ring.
-  const nameSize = target.selected ? 11 : 10;
+  // Name label above the ring — haloed text, no pill chrome.
+  const nameSize = target.selected ? 16 : 14;
   ctx.font = `600 ${nameSize}px ${MONO_FONT}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const nameWidth = ctx.measureText(target.name).width;
-  const chipWidth = nameWidth + 16;
-  const chipHeight = nameSize + 8;
-  const chipY = y - ringRadius - chipHeight - 6;
-  roundedRectPath(ctx, x - chipWidth / 2, chipY, chipWidth, chipHeight, chipHeight / 2);
-  ctx.fillStyle = "rgba(3, 8, 12, 0.74)";
-  ctx.fill();
-  ctx.strokeStyle = target.color;
-  ctx.globalAlpha = (belowHorizon ? 0.45 : 1) * (target.selected ? 0.9 : 0.5);
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  ctx.globalAlpha = belowHorizon ? 0.45 : 1;
-  ctx.fillStyle = "#eef6fa";
-  ctx.fillText(target.name, x, chipY + chipHeight / 2 + 0.5);
+  haloText(ctx, target.name, x, y - ringRadius - 16, "#eef6fa", 5);
 
   if (target.selected) {
-    ctx.font = `500 9.5px ${MONO_FONT}`;
+    ctx.font = `500 13px ${MONO_FONT}`;
     const info = belowHorizon
       ? `${target.elevationDeg.toFixed(0)}° · below horizon`
       : `EL ${target.elevationDeg.toFixed(0)}° · ${Math.round(target.rangeKm).toLocaleString()} km`;
-    haloText(ctx, info, x, y + ringRadius + 13, "rgba(226, 240, 248, 0.85)");
+    haloText(ctx, info, x, y + ringRadius + 17, "rgba(226, 240, 248, 0.9)");
   }
 
   ctx.restore();
 
-  hits.push({ id: target.id, x, y, radius: Math.max(24, ringRadius + 10) });
+  hits.push({ id: target.id, x, y, radius: Math.max(36, ringRadius + 16) });
 }
 
 // --- Dish-face crosshair ------------------------------------------------------
@@ -429,26 +394,26 @@ function drawDishMarker(
   const { x, y } = projected;
   ctx.save();
   ctx.strokeStyle = GOLD;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 2;
   ctx.setLineDash([4, 4]);
   ctx.beginPath();
-  ctx.arc(x, y, 22, 0, Math.PI * 2);
+  ctx.arc(x, y, 28, 0, Math.PI * 2);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.beginPath();
-  ctx.moveTo(x - 30, y);
-  ctx.lineTo(x - 14, y);
-  ctx.moveTo(x + 14, y);
-  ctx.lineTo(x + 30, y);
-  ctx.moveTo(x, y - 30);
-  ctx.lineTo(x, y - 14);
-  ctx.moveTo(x, y + 14);
-  ctx.lineTo(x, y + 30);
+  ctx.moveTo(x - 38, y);
+  ctx.lineTo(x - 18, y);
+  ctx.moveTo(x + 18, y);
+  ctx.lineTo(x + 38, y);
+  ctx.moveTo(x, y - 38);
+  ctx.lineTo(x, y - 18);
+  ctx.moveTo(x, y + 18);
+  ctx.lineTo(x, y + 38);
   ctx.stroke();
-  ctx.font = `600 9px ${MONO_FONT}`;
+  ctx.font = `600 13px ${MONO_FONT}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  haloText(ctx, "DISH FACE", x, y + 41, GOLD);
+  haloText(ctx, "DISH FACE", x, y + 50, GOLD);
   ctx.restore();
 }
 
@@ -465,28 +430,28 @@ function drawReticle(
 
   ctx.save();
   ctx.strokeStyle = color;
-  ctx.lineWidth = lockColor ? 1.8 : 1.1;
+  ctx.lineWidth = lockColor ? 2.2 : 1.5;
   ctx.beginPath();
-  ctx.arc(cx, cy, 24, 0, Math.PI * 2);
+  ctx.arc(cx, cy, 32, 0, Math.PI * 2);
   ctx.stroke();
 
   ctx.beginPath();
   for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-    ctx.moveTo(cx + dx * 28, cy + dy * 28);
-    ctx.lineTo(cx + dx * 36, cy + dy * 36);
+    ctx.moveTo(cx + dx * 38, cy + dy * 38);
+    ctx.lineTo(cx + dx * 48, cy + dy * 48);
   }
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.arc(cx, cy, 1.6, 0, Math.PI * 2);
+  ctx.arc(cx, cy, 2.1, 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
 
   if (lockColor) {
-    ctx.font = `600 10px ${MONO_FONT}`;
+    ctx.font = `600 14px ${MONO_FONT}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    haloText(ctx, "ON TARGET", cx, cy + 52, lockColor);
+    haloText(ctx, "ON TARGET", cx, cy + 64, lockColor);
   }
   ctx.restore();
 }
@@ -497,26 +462,26 @@ function drawCompassRibbon(ctx: CanvasRenderingContext2D, scene: ArScene) {
   const { width, targets } = scene;
   const heading = scene.ribbonHeadingDeg ?? scene.view.headingDeg;
   const cx = width / 2;
-  const baseline = 78;
-  const halfWidth = Math.min(width * 0.42, 250);
-  const pxPerDeg = 3.1;
+  const baseline = 92;
+  const halfWidth = Math.min(width * 0.45, 280);
+  const pxPerDeg = 3.4;
 
   ctx.save();
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
   // Digital heading readout above the tape.
-  ctx.font = `600 17px ${MONO_FONT}`;
+  ctx.font = `600 24px ${MONO_FONT}`;
   haloText(
     ctx,
     `${Math.round(normalizeDegrees(heading)).toString().padStart(3, "0")}°`,
     cx,
-    baseline - 36,
+    baseline - 42,
     "#f4fafd",
-    4
+    5
   );
-  ctx.font = `600 10px ${MONO_FONT}`;
-  haloText(ctx, cardinalLabel(heading), cx, baseline - 20, "rgba(226, 240, 248, 0.75)");
+  ctx.font = `600 13px ${MONO_FONT}`;
+  haloText(ctx, cardinalLabel(heading), cx, baseline - 22, "rgba(226, 240, 248, 0.78)");
 
   const edgeFade = (dx: number) => Math.max(0, 1 - (Math.abs(dx) / halfWidth) ** 2);
 
@@ -533,17 +498,17 @@ function drawCompassRibbon(ctx: CanvasRenderingContext2D, scene: ArScene) {
     const cardinal = normalizeDegrees(az) % 45 === 0;
     ctx.globalAlpha = fade * (major ? 0.85 : 0.4);
     ctx.strokeStyle = "rgba(235, 246, 252, 0.9)";
-    ctx.lineWidth = cardinal ? 1.6 : 1;
+    ctx.lineWidth = cardinal ? 2 : 1.2;
     ctx.beginPath();
     ctx.moveTo(cx + dx, baseline);
-    ctx.lineTo(cx + dx, baseline - (cardinal ? 10 : major ? 7 : 4));
+    ctx.lineTo(cx + dx, baseline - (cardinal ? 14 : major ? 10 : 6));
     ctx.stroke();
 
     if (cardinal) {
       const label = cardinalLabel(az);
       ctx.globalAlpha = fade;
-      ctx.font = `600 ${label.length === 1 ? 11 : 9}px ${MONO_FONT}`;
-      haloText(ctx, label, cx + dx, baseline + 9, "rgba(240, 249, 255, 0.9)");
+      ctx.font = `600 ${label.length === 1 ? 14 : 12}px ${MONO_FONT}`;
+      haloText(ctx, label, cx + dx, baseline + 12, "rgba(240, 249, 255, 0.9)");
     }
   }
 
@@ -552,27 +517,27 @@ function drawCompassRibbon(ctx: CanvasRenderingContext2D, scene: ArScene) {
     const diff = signedAngleDifference(target.azimuthDeg, heading);
     const dx = Math.max(-halfWidth - 8, Math.min(halfWidth + 8, diff * pxPerDeg));
     const pinned = Math.abs(diff * pxPerDeg) > halfWidth + 8;
-    const y = baseline + (target.selected ? 20 : 19);
+    const y = baseline + (target.selected ? 26 : 24);
     ctx.globalAlpha = target.selected ? 1 : 0.7;
     ctx.fillStyle = target.color;
     if (pinned) {
       const dir = dx > 0 ? 1 : -1;
       ctx.beginPath();
-      ctx.moveTo(cx + dx + dir * 4, y);
-      ctx.lineTo(cx + dx - dir * 3, y - 3.5);
-      ctx.lineTo(cx + dx - dir * 3, y + 3.5);
+      ctx.moveTo(cx + dx + dir * 5, y);
+      ctx.lineTo(cx + dx - dir * 4, y - 4.5);
+      ctx.lineTo(cx + dx - dir * 4, y + 4.5);
       ctx.closePath();
       ctx.fill();
     } else {
       ctx.beginPath();
-      ctx.arc(cx + dx, y, target.selected ? 3.4 : 2.4, 0, Math.PI * 2);
+      ctx.arc(cx + dx, y, target.selected ? 4.4 : 3.2, 0, Math.PI * 2);
       ctx.fill();
       if (target.selected) {
         ctx.globalAlpha = 0.85;
         ctx.strokeStyle = target.color;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 1.4;
         ctx.beginPath();
-        ctx.arc(cx + dx, y, 6, 0, Math.PI * 2);
+        ctx.arc(cx + dx, y, 8, 0, Math.PI * 2);
         ctx.stroke();
       }
     }
@@ -582,9 +547,9 @@ function drawCompassRibbon(ctx: CanvasRenderingContext2D, scene: ArScene) {
   // Boresight caret.
   ctx.fillStyle = "#f4fafd";
   ctx.beginPath();
-  ctx.moveTo(cx, baseline - 14);
-  ctx.lineTo(cx - 4, baseline - 20);
-  ctx.lineTo(cx + 4, baseline - 20);
+  ctx.moveTo(cx, baseline - 18);
+  ctx.lineTo(cx - 5, baseline - 26);
+  ctx.lineTo(cx + 5, baseline - 26);
   ctx.closePath();
   ctx.fill();
 
@@ -613,9 +578,9 @@ function drawEdgeGuidance(
 
   const cx = width / 2;
   const cy = height / 2;
-  const insetX = 48;
-  const insetTop = 128;
-  const insetBottom = Math.min(height * 0.34, 230);
+  const insetX = 56;
+  const insetTop = 156;
+  const insetBottom = Math.min(height * 0.38, 280);
 
   let scale = Number.POSITIVE_INFINITY;
   if (dirX > 1e-6) scale = Math.min(scale, (width - insetX - cx) / dirX);
@@ -634,24 +599,24 @@ function drawEdgeGuidance(
   ctx.rotate(angle);
   ctx.strokeStyle = GOLD;
   ctx.fillStyle = GOLD;
-  ctx.lineWidth = 2.4;
+  ctx.lineWidth = 3;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.shadowColor = "rgba(255, 204, 102, 0.55)";
   ctx.shadowBlur = 9;
 
   ctx.beginPath();
-  ctx.moveTo(-9, 7);
-  ctx.lineTo(0, -6);
-  ctx.lineTo(9, 7);
+  ctx.moveTo(-12, 9);
+  ctx.lineTo(0, -8);
+  ctx.lineTo(12, 9);
   ctx.stroke();
 
   ctx.rotate(-angle);
   ctx.shadowBlur = 0;
-  ctx.font = `600 11px ${MONO_FONT}`;
+  ctx.font = `600 15px ${MONO_FONT}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  haloText(ctx, `${Math.round(offAxisDeg)}°`, -dirX * 24, -dirY * 24 + 2, GOLD);
+  haloText(ctx, `${Math.round(offAxisDeg)}°`, -dirX * 30, -dirY * 30 + 2, GOLD);
   ctx.restore();
 }
 

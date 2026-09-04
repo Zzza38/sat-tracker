@@ -16,6 +16,7 @@ import { DEFAULT_OBSERVER } from "@/shared/observer/defaults";
 import { DEFAULT_TLE_SOURCES, refreshIntervalToHours } from "@/shared/tle/sources";
 import { resolveSatelliteColor } from "@/shared/satellite/colors";
 import { ObserverSite, PassPrediction, SatelliteRecord } from "@/shared/types";
+import { canAccessOrientationSensors, detectOrientationHardware } from "../lib/arCapability";
 
 type Page = "catalog" | "tracker" | "ar" | "passes" | "details" | "settings";
 
@@ -49,7 +50,10 @@ function writeUiState(partial: StoredUiState) {
   }
 }
 
-function normalizePage(page: unknown): Page {
+function normalizePage(page: unknown, arAvailable: boolean): Page {
+  if (page === "ar" && !arAvailable) {
+    return "tracker";
+  }
   return page === "catalog" || page === "tracker" || page === "ar" || page === "passes" || page === "details" || page === "settings"
     ? page
     : "catalog";
@@ -58,6 +62,7 @@ function normalizePage(page: unknown): Page {
 interface AppContextValue {
   page: Page;
   setPage: (page: Page) => void;
+  arAvailable: boolean;
   trackerViewMode: "2d" | "3d";
   setTrackerViewMode: (mode: "2d" | "3d") => void;
   satellites: SatelliteRecord[];
@@ -182,7 +187,12 @@ function chooseDefaultSatelliteId(records: SatelliteRecord[], watchlistIds: stri
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const storedUi = readUiState();
-  const [page, setPageState] = useState<Page>(normalizePage(storedUi.page));
+  const sensorsKnownAtBoot = canAccessOrientationSensors();
+  const redirectedFromArRef = useRef(storedUi.page === "ar" && !sensorsKnownAtBoot);
+  const [arAvailable, setArAvailable] = useState(sensorsKnownAtBoot);
+  const [page, setPageState] = useState<Page>(() =>
+    normalizePage(storedUi.page, sensorsKnownAtBoot)
+  );
   const [trackerViewMode, setTrackerViewModeState] = useState<"2d" | "3d">(
     storedUi.trackerViewMode ?? "2d"
   );
@@ -205,8 +215,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const observerSelectionEpochRef = useRef(0);
 
   const setPage = (nextPage: Page) => {
-    setPageState(nextPage);
-    writeUiState({ page: nextPage });
+    const resolved = normalizePage(nextPage, arAvailable);
+    setPageState(resolved);
+    writeUiState({ page: resolved });
   };
 
   const setTrackerViewMode = (mode: "2d" | "3d") => {
@@ -362,6 +373,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void refreshCatalog();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void detectOrientationHardware().then((available) => {
+      if (cancelled) {
+        return;
+      }
+      setArAvailable(available);
+      setPageState((current) => {
+        if (
+          available &&
+          redirectedFromArRef.current &&
+          current === "tracker"
+        ) {
+          redirectedFromArRef.current = false;
+          writeUiState({ page: "ar" });
+          return "ar";
+        }
+        if (!available && current === "ar") {
+          writeUiState({ page: "tracker" });
+          return "tracker";
+        }
+        return current;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const selectedSatellite = useMemo(
     () => satellites.find((record) => record.id === selectedSatelliteId),
     [satellites, selectedSatelliteId]
@@ -385,6 +425,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppContextValue>(() => ({
     page,
     setPage,
+    arAvailable,
     trackerViewMode,
     setTrackerViewMode,
     satellites,
@@ -558,6 +599,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     setPasses
   }), [
+    arAvailable,
     bootstrapping,
     catalogSyncing,
     error,

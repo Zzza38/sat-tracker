@@ -1,13 +1,13 @@
 import { clsx } from "clsx";
 import { useApp } from "../context/AppContext";
-import { NAV_ITEMS } from "./navItems";
+import { getVisibleNavItems } from "./navItems";
 
 export function MobileTabBar() {
-  const { page, setPage } = useApp();
+  const { page, setPage, arAvailable } = useApp();
 
   return (
     <nav className="mobile-tab-bar" aria-label="Primary">
-      {NAV_ITEMS.map((item) => {
+      {getVisibleNavItems(arAvailable).map((item) => {
         const Icon = item.icon;
         const active = page === item.id;
         return (

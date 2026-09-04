@@ -8,3 +8,7 @@ export const NAV_ITEMS = [
   { id: "details", label: "Details", icon: Info },
   { id: "settings", label: "Settings", icon: Settings2 }
 ] as const;
+
+export function getVisibleNavItems(arAvailable: boolean) {
+  return NAV_ITEMS.filter((item) => item.id !== "ar" || arAvailable);
+}
